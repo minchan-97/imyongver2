@@ -89,25 +89,100 @@ def _pdf_doc(raw):
     return pdfium.PdfDocument(raw)
 
 
+def sniff(name: str, raw: bytes) -> str:
+    """
+    확장자 대신 '실제 내용'으로 종류 판별.
+    폰에서 올린 파일은 이름과 속이 다른 경우가 많다
+    (HWP를 .pdf로 저장, 다운로드 실패로 받은 웹페이지, PNG인데 .pdf 등).
+    """
+    head = raw[:2048]
+    if b"%PDF" in head[:1024]:
+        return "pdf"
+    if head[:8] == b"\x89PNG\r\n\x1a\n" or head[:3] == b"\xff\xd8\xff" \
+            or head[:4] == b"RIFF" or head[4:12] in (b"ftypheic", b"ftypheix",
+                                                    b"ftypmif1", b"ftyphevc"):
+        return "image"
+    if head[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" or b"HWP Document File" in head:
+        return "hwp"
+    if head[:4] == b"PK\x03\x04":
+        return "hwpx" if name.lower().endswith(".hwpx") else "docx"
+    low = head.lower()
+    if b"<html" in low or b"<!doctype html" in low:
+        return "html"
+    if name.lower().endswith(IMAGE_EXT):
+        return "image"
+    return "text"
+
+
+BAD_KIND_MSG = {
+    "hwp": "한글(HWP) 파일이에요. 한글에서 'PDF로 저장' 후 올려주세요.",
+    "hwpx": "한글(HWPX) 파일이에요. 한글에서 'PDF로 저장' 후 올려주세요.",
+    "html": "PDF가 아니라 웹페이지(다운로드 실패 화면)예요. 원본 PDF를 다시 받아주세요.",
+}
+
+
+def _pdf_open_error(e) -> str:
+    m = str(e)
+    if "password" in m.lower():
+        return "암호가 걸린 PDF예요. 암호를 풀어 다시 저장한 뒤 올려주세요."
+    return f"PDF를 열 수 없어요(손상된 파일일 수 있음): {m}"
+
+
 def build_pages(files) -> list[dict]:
     """
     files: [(파일명, bytes), ...] (업로드 순서 유지)
-    반환: 쪽 목록 [{name, raw, sha, index, kind, text?}]
+    반환: 쪽 목록 [{name, raw, sha, index, kind, text?, error?}]
       pdf → 쪽마다 1개 / 사진 → 파일마다 1개 / docx·txt → 약 1800자씩 1개
+      열 수 없는 파일 → kind="broken" 1개 (앱이 죽지 않고 그 파일만 오류 표시)
     """
     pages = []
     for name, raw in files:
         sha = file_sha(raw)
-        if _is_pdf(name):
-            for i in range(len(_pdf_doc(raw))):
-                pages.append({"name": name, "raw": raw, "sha": sha, "index": i, "kind": "pdf"})
-        elif _is_image(name):
-            pages.append({"name": name, "raw": raw, "sha": sha, "index": 0, "kind": "image"})
-        else:
-            for i, t in enumerate(_text_pages(name, raw)):
-                pages.append({"name": name, "raw": raw, "sha": sha, "index": i,
-                              "kind": "text", "text": t})
+        base = {"name": name, "raw": raw, "sha": sha}
+        kind = sniff(name, raw)
+        try:
+            if kind in BAD_KIND_MSG:
+                raise ValueError(BAD_KIND_MSG[kind])
+            if kind == "pdf":
+                start = raw.find(b"%PDF")          # 앞에 붙은 쓰레기 바이트 제거
+                if start > 0:
+                    raw = raw[start:]
+                    base["raw"] = raw
+                try:
+                    n = len(_pdf_doc(raw))
+                except Exception as e:
+                    # pdfium이 못 열면 pdfplumber로 텍스트라도 건짐
+                    texts = _pdfplumber_texts(raw)
+                    if texts is None:
+                        raise ValueError(_pdf_open_error(e))
+                    for i, t in enumerate(texts):
+                        pages.append(dict(base, index=i, kind="text", text=t))
+                    continue
+                if n == 0:
+                    raise ValueError("쪽이 0개인 PDF예요.")
+                for i in range(n):
+                    pages.append(dict(base, index=i, kind="pdf"))
+            elif kind == "image":
+                pages.append(dict(base, index=0, kind="image"))
+            else:
+                tp = _text_pages(name if kind != "docx" else "x.docx", raw)
+                if not tp:
+                    raise ValueError("읽을 글자가 없는 파일이에요.")
+                for i, t in enumerate(tp):
+                    pages.append(dict(base, index=i, kind="text", text=t))
+        except Exception as e:
+            pages.append(dict(base, index=0, kind="broken", error=str(e)))
     return pages
+
+
+def _pdfplumber_texts(raw):
+    try:
+        import pdfplumber
+        with pdfplumber.open(io.BytesIO(raw)) as pdf:
+            texts = [(p.extract_text() or "") for p in pdf.pages]
+        return texts if any(t.strip() for t in texts) else None
+    except Exception:
+        return None
 
 
 def _to_jpeg(img, max_side=2000) -> bytes:
@@ -132,6 +207,8 @@ def render_source(page: dict, dpi: int = 110):
     """쪽 하나 → 비전 입력/미리보기용 JPEG (텍스트 쪽은 None)."""
     if page["kind"] == "pdf":
         return render_page(page["raw"], page["index"], dpi)
+    if page["kind"] == "broken":
+        return None
     if page["kind"] == "image":
         from PIL import Image
         try:
@@ -139,7 +216,10 @@ def render_source(page: dict, dpi: int = 110):
             pillow_heif.register_heif_opener()
         except Exception:
             pass
-        return _to_jpeg(Image.open(io.BytesIO(page["raw"])))
+        try:
+            return _to_jpeg(Image.open(io.BytesIO(page["raw"])))
+        except Exception as e:
+            raise ValueError(f"사진을 열 수 없어요(HEIC면 pillow-heif 필요): {e}")
     return None
 
 
@@ -240,6 +320,9 @@ def scan_pages(pages, api_key=None, concept_names=None, cache: ScanCache = None,
     todo = []
     for k, pg in enumerate(pages):
         meta = {"page": k, "name": pg["name"], "index": pg["index"]}
+        if pg["kind"] == "broken":
+            results[k] = dict(_plain("", "broken"), cached=False, error=pg["error"], **meta)
+            continue
         if pg["kind"] == "text":
             results[k] = dict(_plain(pg["text"], "text"), cached=False, **meta)
             continue
