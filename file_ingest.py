@@ -28,12 +28,10 @@ def extract_text(filename: str, raw: bytes) -> str:
 
 
 def _extract_pdf(raw: bytes) -> str:
-    import pdfplumber
-    out = []
-    with pdfplumber.open(io.BytesIO(raw)) as pdf:
-        for page in pdf.pages:
-            out.append(page.extract_text() or "")
-    return "\n".join(out)
+    """pdfium 텍스트층(pdfplumber보다 수십 배 빠름)."""
+    import pypdfium2 as pdfium
+    pdf = pdfium.PdfDocument(raw)
+    return "\n".join((pdf[i].get_textpage().get_text_range() or "") for i in range(len(pdf)))
 
 
 def _extract_docx(raw: bytes) -> str:
