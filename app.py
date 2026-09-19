@@ -331,10 +331,18 @@ with tabin:
                     out.append({"name": name, "raw": raw, "res": res, "hw": is_img})
                 bar.progress(1.0, text="분류 중…")
                 tag_model = cloud.cfg("OPENAI_TAG_MODEL") or "gpt-4o-mini"
+                def _tag(f):
+                    errs = [r.get("error") for r in f["res"] if r.get("error")]
+                    if errs and len(errs) == len(f["res"]):   # 통째로 못 읽은 파일
+                        return {"category": "지도서_각론", "subject": None, "title": "",
+                                "year": None, "level": None, "grade_band": "",
+                                "area": "", "unit": "", "confidence": 0.0,
+                                "reason": "⚠️ " + errs[0], "page_subjects": {},
+                                "failed": True}
+                    return classify(f["name"], f["res"], okey_in or None, tag_model,
+                                    is_image=f["hw"])
                 with ThreadPoolExecutor(max_workers=6) as ex:
-                    tags = list(ex.map(lambda f: classify(
-                        f["name"], f["res"], okey_in or None, tag_model,
-                        is_image=f["hw"]), out))
+                    tags = list(ex.map(_tag, out))
                 for f, t in zip(out, tags):
                     f["tag"] = t
                 st.session_state[skey] = out
@@ -350,7 +358,7 @@ with tabin:
                 t = f["tag"]
                 stem = os.path.splitext(f["name"])[0]
                 rows.append({
-                    "#": i, "넣기": True, "파일": f["name"],
+                    "#": i, "넣기": not t.get("failed"), "파일": f["name"],
                     "종류": t["category"],
                     "과목": ("쪽별 자동" if t["category"] == "기출" and t["page_subjects"]
                              else (t["subject"] or subject)),
@@ -360,6 +368,10 @@ with tabin:
                     "손글씨": f["hw"], "확신": int(round(t["confidence"] * 100)),
                     "쪽": len(f["res"]), "근거": t["reason"],
                 })
+            _failed = [f["name"] for f in out if f["tag"].get("failed")]
+            if _failed:
+                st.error(f"못 읽은 파일 {len(_failed)}개 (저장에서 제외됨): " + ", ".join(_failed)
+                         + " — 표의 '근거' 칸에 이유가 있어요.")
             df_in = pd.DataFrame(rows).sort_values("확신", kind="stable")
             ed_in = st.data_editor(
                 df_in, hide_index=True, use_container_width=True,
