@@ -239,9 +239,11 @@ def restore_history(path: str, version_name: str) -> bool:
 # ── 자료(Record)를 DB 테이블로 미러링 ─────────────────────────
 def sync_records(path: str, records) -> bool:
     """
-    save_records_pkl 직후 호출. pkl 전체 = 이 file_key의 행 전체로 맞춘다
-    (추가·수정은 upsert, pkl에서 빠진 행은 삭제).
+    save_records_pkl 직후 호출. pkl 전체 = 이 file_key의 행 전체로 맞춘다.
+    행마다 내용 해시(row_sha)를 비교해 '바뀐 행만' 올리고, 빠진 행만 지운다
+    → 1건 추가해도 수천 행을 다시 올리지 않음.
     """
+    import json
     c = client()
     if not c:
         return False
@@ -251,24 +253,26 @@ def sync_records(path: str, records) -> bool:
     for r in records:
         d = r.to_dict() if hasattr(r, "to_dict") else dict(r)
         d["file_key"] = file_key
+        d["row_sha"] = hashlib.sha1(json.dumps(d, ensure_ascii=False, sort_keys=True,
+                                               default=str).encode()).hexdigest()
         d["updated_epoch"] = now
         rows[d["rec_id"]] = d            # 같은 id 중복 제거(upsert 충돌 방지)
     try:
         tbl = c.table("records")
-        vals = list(rows.values())
-        for i in range(0, len(vals), 500):
-            tbl.upsert(vals[i:i + 500], on_conflict="file_key,rec_id").execute()
-
-        existing, start = [], 0
+        existing, start = {}, 0
         while True:
-            res = (tbl.select("rec_id").eq("file_key", file_key)
+            res = (tbl.select("rec_id,row_sha").eq("file_key", file_key)
                    .range(start, start + 999).execute())
-            got = [x["rec_id"] for x in (res.data or [])]
-            existing += got
+            got = res.data or []
+            existing.update({x["rec_id"]: x.get("row_sha") for x in got})
             if len(got) < 1000:
                 break
             start += 1000
-        stale = [x for x in existing if x not in rows]
+
+        changed = [d for k, d in rows.items() if existing.get(k) != d["row_sha"]]
+        for i in range(0, len(changed), 500):
+            tbl.upsert(changed[i:i + 500], on_conflict="file_key,rec_id").execute()
+        stale = [k for k in existing if k not in rows]
         for i in range(0, len(stale), 200):
             tbl.delete().eq("file_key", file_key).in_("rec_id", stale[i:i + 200]).execute()
         return True
