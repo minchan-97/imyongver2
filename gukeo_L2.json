@@ -1,0 +1,167 @@
+[
+  {
+    "text": "이야기를 읽고 인물의 마음을 짐작하며 감상한다",
+    "layer": "L2_corpus",
+    "subject": "국어",
+    "source": "2022개정 국어과 성취기준",
+    "year": null,
+    "level": null,
+    "code": "[4국05-04]",
+    "qtype": null,
+    "rec_id": "7432d5f9c995"
+  },
+  {
+    "text": "작품 속 인물의 말과 행동에서 성격을 파악한다",
+    "layer": "L2_corpus",
+    "subject": "국어",
+    "source": "2022개정 국어과 성취기준",
+    "year": null,
+    "level": null,
+    "code": "[4국05-02]",
+    "qtype": null,
+    "rec_id": "5dd5d260e405"
+  },
+  {
+    "text": "글을 읽고 중심 생각을 파악하여 요약한다",
+    "layer": "L2_corpus",
+    "subject": "국어",
+    "source": "2022개정 국어과 성취기준",
+    "year": null,
+    "level": null,
+    "code": "[4국02-02]",
+    "qtype": null,
+    "rec_id": "7d0f9894928d"
+  },
+  {
+    "text": "문단의 짜임을 생각하며 글을 읽는다",
+    "layer": "L2_corpus",
+    "subject": "국어",
+    "source": "국어 지도서 3학년",
+    "year": null,
+    "level": null,
+    "code": "[4국02-01]",
+    "qtype": null,
+    "rec_id": "346546f3ebab"
+  },
+  {
+    "text": "자신의 생각을 문장으로 정확하게 표현한다",
+    "layer": "L2_corpus",
+    "subject": "국어",
+    "source": "2022개정 국어과 성취기준",
+    "year": null,
+    "level": null,
+    "code": "[4국03-01]",
+    "qtype": null,
+    "rec_id": "6a11e148c719"
+  },
+  {
+    "text": "겪은 일을 시나 이야기로 표현한다",
+    "layer": "L2_corpus",
+    "subject": "국어",
+    "source": "2022개정 국어과 성취기준",
+    "year": null,
+    "level": null,
+    "code": "[4국05-05]",
+    "qtype": null,
+    "rec_id": "093090a69022"
+  },
+  {
+    "text": "낱말의 뜻을 사전에서 찾아 확인한다",
+    "layer": "L2_corpus",
+    "subject": "국어",
+    "source": "국어 지도서 4학년",
+    "year": null,
+    "level": null,
+    "code": "[4국04-01]",
+    "qtype": null,
+    "rec_id": "d65802308ea9"
+  },
+  {
+    "text": "높임 표현을 상황에 맞게 사용한다",
+    "layer": "L2_corpus",
+    "subject": "국어",
+    "source": "2022개정 국어과 성취기준",
+    "year": null,
+    "level": null,
+    "code": "[4국04-03]",
+    "qtype": null,
+    "rec_id": "7f6488ad5b62"
+  },
+  {
+    "text": "이야기의 흐름을 파악하며 이어질 내용을 상상한다",
+    "layer": "L2_corpus",
+    "subject": "국어",
+    "source": "국어 지도서 3학년",
+    "year": null,
+    "level": null,
+    "code": "[4국05-03]",
+    "qtype": null,
+    "rec_id": "ef1ec3fe8cae"
+  },
+  {
+    "text": "바른 자세로 또박또박 소리 내어 읽는다",
+    "layer": "L2_corpus",
+    "subject": "국어",
+    "source": "2022개정 국어과 성취기준",
+    "year": null,
+    "level": null,
+    "code": "[2국01-01]",
+    "qtype": null,
+    "rec_id": "af18641b4b9f"
+  },
+  {
+    "text": "상대의 말을 집중하여 듣고 반응한다",
+    "layer": "L2_corpus",
+    "subject": "국어",
+    "source": "2022개정 국어과 성취기준",
+    "year": null,
+    "level": null,
+    "code": "[4국01-01]",
+    "qtype": null,
+    "rec_id": "a043121c9062"
+  },
+  {
+    "text": "자신의 감정을 언어로 표현하며 대화한다",
+    "layer": "L2_corpus",
+    "subject": "국어",
+    "source": "국어 지도서 2학년",
+    "year": null,
+    "level": null,
+    "code": "[2국01-03]",
+    "qtype": null,
+    "rec_id": "f69faf94671f"
+  },
+  {
+    "text": "글쓴이의 의도를 파악하며 글을 읽는다",
+    "layer": "L2_corpus",
+    "subject": "국어",
+    "source": "2022개정 국어과 성취기준",
+    "year": null,
+    "level": null,
+    "code": "[6국02-03]",
+    "qtype": null,
+    "rec_id": "a5435171a443"
+  },
+  {
+    "text": "매체 자료를 활용하여 생각을 효과적으로 표현한다",
+    "layer": "L2_corpus",
+    "subject": "국어",
+    "source": "2022개정 국어과 성취기준",
+    "year": null,
+    "level": null,
+    "code": "[6국03-02]",
+    "qtype": null,
+    "rec_id": "46ccaca3cbb8"
+  },
+  {
+    "text": "토의를 통해 문제를 해결하는 방법을 찾는다",
+    "layer": "L2_corpus",
+    "subject": "국어",
+    "source": "2022개정 국어과 성취기준",
+    "year": null,
+    "level": null,
+    "code": "[6국01-02]",
+    "qtype": null,
+    "rec_id": "432fb8af4d51"
+  }
+]
