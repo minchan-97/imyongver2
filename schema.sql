@@ -30,9 +30,13 @@ create table if not exists public.records (
   unit        text,
   model       text,
   exam_type   text,
+  row_sha     text,                              -- 바뀐 행만 올리기용
   updated_epoch double precision,
   primary key (file_key, rec_id)
 );
+-- 이전 버전 스키마를 이미 실행했다면 이 줄이 컬럼을 추가해 줌
+alter table public.records add column if not exists row_sha text;
+
 create index if not exists records_subject_layer on public.records (subject, layer);
 create index if not exists records_code on public.records (code);
 create index if not exists records_year on public.records (year);
