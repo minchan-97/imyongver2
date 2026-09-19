@@ -11,7 +11,7 @@ app.py — 임용 국어 4레이어 Streamlit 앱 (단일 앱·탭 방식)
 
 데이터는 전부 과목별 pkl로 data/ 아래 저장된다.
 """
-import sys, os, json
+import sys, os, json, time
 import numpy as np
 import streamlit as st
 
@@ -38,6 +38,86 @@ def api_key(label, secret_name, widget_key):
         st.caption(f"🔑 {label}: secrets에서 불러옴")
         return str(v)
     return st.text_input(label, type="password", key=widget_key)
+
+def page_scan_ui(prefix, ups, concept_names=None, handwriting=False):
+    """
+    파일들(pdf·사진·docx·txt, 여러 개 가능) → 쪽 통째로 스캔 → 쪽 표로 검토.
+    반환: (edited_df, results) 또는 (None, None) (아직 스캔 전)
+    """
+    import pandas as pd
+    from page_scan import build_pages, scan_pages, render_source, file_sha, ScanCache
+    files = [(u.name, u.getvalue()) for u in ups]
+    pages = build_pages(files)
+    needs_key = any(p["kind"] != "text" for p in pages)
+    okey = api_key("OpenAI Key(스캔용)", "OPENAI_API_KEY", f"{prefix}_scankey") if needs_key else ""
+    sig = file_sha("|".join(file_sha(r) for _, r in files).encode() + bytes([handwriting]))
+    state = f"{prefix}_scan_{sig[:16]}"
+
+    if state not in st.session_state:
+        st.caption(f"{len(files)}개 파일 · {len(pages)}쪽"
+                   + (" · 손글씨 모드(고해상도·정밀 모델)" if handwriting else ""))
+        if needs_key and not okey:
+            st.caption("키가 없으면 PDF 텍스트층만 읽어요(사진·스캔본·손글씨는 못 읽음).")
+        if st.button("🔍 스캔 시작", type="primary", key=f"{prefix}_scanbtn"):
+            bar = st.progress(0.0, text="스캔 준비…")
+            t0 = time.time()
+            res = scan_pages(pages, okey or None, concept_names or [],
+                             cache=ScanCache(paths.scan_cache_path()),
+                             model=cloud.cfg("OPENAI_HANDWRITING_MODEL" if handwriting
+                                             else "OPENAI_SCAN_MODEL"),
+                             handwriting=handwriting,
+                             progress=lambda d, n: bar.progress(d / max(n, 1),
+                                                                text=f"{d}/{n}쪽"))
+            st.session_state[state] = res
+            st.session_state[state + "_sec"] = time.time() - t0
+            st.rerun()
+        return None, None
+
+    res = st.session_state[state]
+    n_err = sum(1 for r in res if r.get("error"))
+    st.caption(f"{len(res)}쪽 · 캐시 {sum(r.get('cached') for r in res)} · "
+               f"건너뜀 {sum(r['skip'] for r in res)} · 오류 {n_err} · "
+               f"{st.session_state.get(state + '_sec', 0):.0f}초")
+    if handwriting:
+        st.caption("✍️ 손글씨: 확신 없는 낱말엔 (?)가 붙어요 — 그 부분만 확인해서 고치세요.")
+    if n_err:
+        st.warning("오류 난 쪽은 체크 해제돼 있어요. '다시 스캔'하면 그 쪽만 다시 읽어요.")
+    multi = len(files) > 1
+    df = pd.DataFrame([{
+        "넣기": (not r["skip"]) and not r.get("error"),
+        "쪽": r["page"] + 1,
+        "파일": r["name"] if multi else "",
+        "코드": ", ".join(r["codes"]),
+        "영역": r["area"],
+        "본문": r["text"] or r.get("note", "") or r.get("error", ""),
+    } for r in res])
+    if not multi:
+        df = df.drop(columns=["파일"])
+    edited = st.data_editor(
+        df, hide_index=True, use_container_width=True, disabled=["쪽", "파일"],
+        column_config={"본문": st.column_config.TextColumn(width="large"),
+                       "넣기": st.column_config.CheckboxColumn(width="small"),
+                       "쪽": st.column_config.NumberColumn(width="small")},
+        key=f"{prefix}_editor_{sig[:8]}")
+    if st.button("🔄 다시 스캔", key=f"{prefix}_rescan"):
+        st.session_state.pop(state, None)
+        st.rerun()
+    if needs_key:
+        with st.expander("🖼️ 원본 페이지와 비교"):
+            pg = st.number_input("쪽", 1, len(res), 1, key=f"{prefix}_pv")
+            img = render_source(pages[pg - 1])
+            if img:
+                st.image(img, use_container_width=True)
+            st.markdown(res[pg - 1]["text"] or "_(내용 없음)_")
+    return edited, res
+
+
+def merge_new(existing, new_records):
+    """같은 rec_id(같은 출처+본문)는 다시 넣지 않음 → 같은 파일 두 번 저장해도 중복 없음."""
+    have = {r.rec_id for r in existing}
+    added = [r for r in new_records if r.rec_id not in have]
+    return existing + added, len(added)
+
 
 # ── 접속 비밀번호 (배포 시 URL만 알면 누구나 자료를 바꿀 수 있으므로) ──
 _APP_PW = cloud.cfg("APP_PASSWORD")
@@ -194,9 +274,175 @@ emb, som = load_engine(subject, _mtime(paths.emb_path(subject)), _mtime(paths.so
 
 st.title(f"📖 임용 4레이어 — {subject}")
 
-tab2, tab1, tab3, tab4, tab5, tabp, tabc = st.tabs(
-    ["📚 자료·학습 (L2)", "📈 기출 패턴 (L1)", "🔎 트렌드 (L3)",
+tabin, tab2, tab1, tab3, tab4, tab5, tabp, tabc = st.tabs(
+    ["📥 한 번에 넣기", "📚 자료·학습 (L2)", "📈 기출 패턴 (L1)", "🔎 트렌드 (L3)",
      "📝 문제 풀기 (L4)", "🎯 수능형 연습 (L5)", "📜 지문 학습", "🕸️ 개념 지도"])
+
+# ══════════════════════════════════════════════════════════════
+# 탭 — 한 번에 넣기 (자동 분류)
+# ══════════════════════════════════════════════════════════════
+with tabin:
+    st.subheader("한 번에 넣기 — 올리면 알아서 분류")
+    st.caption("자료·기출·필기 사진을 섞어서 한꺼번에 올려요. 읽기 → 종류·과목·이름 자동 태깅 → "
+               "파일당 한 줄로 확인 → 저장. 기출은 쪽마다 과목을 판정해 과목별 기출로 나눠 들어가요.")
+    if st.session_state.get("in_summary"):
+        st.success("저장 완료 · " + " · ".join(st.session_state.pop("in_summary")))
+
+    ups_in = st.file_uploader(
+        "파일 여러 개 (pdf · 사진 · docx · txt)",
+        type=["pdf", "docx", "txt", "jpg", "jpeg", "png", "webp", "heic"],
+        accept_multiple_files=True, key="in_files")
+    okey_in = api_key("OpenAI Key(읽기·분류용)", "OPENAI_API_KEY", "in_key")
+
+    if ups_in:
+        import pandas as pd
+        from concurrent.futures import ThreadPoolExecutor
+        from page_scan import build_pages, scan_pages, ScanCache, file_sha, IMAGE_EXT
+        from auto_tag import classify, CATEGORIES
+        from concept_dict import ConceptDict
+        _cnames = ConceptDict.load(paths.concept_dict_path(subject), subject).names()
+        files_in = [(u.name, u.getvalue()) for u in ups_in]
+        sig_in = file_sha("|".join(file_sha(r) for _, r in files_in).encode())[:16]
+        skey = f"in_{sig_in}"
+
+        def _scan_one(name, raw, hw, cache, prog=None):
+            res = scan_pages(build_pages([(name, raw)]), okey_in or None, _cnames,
+                             cache=cache, handwriting=hw,
+                             model=cloud.cfg("OPENAI_HANDWRITING_MODEL" if hw
+                                             else "OPENAI_SCAN_MODEL"),
+                             progress=prog)
+            for r in res:
+                r["page_in_file"] = r["page"]
+            return res
+
+        if skey not in st.session_state:
+            st.caption(f"{len(files_in)}개 파일 · 사진은 손글씨 모드로 읽어요")
+            if st.button("🔍 읽고 분류하기", type="primary", key="in_go"):
+                bar = st.progress(0.0, text="읽는 중…")
+                cache = ScanCache(paths.scan_cache_path())
+                t0, out = time.time(), []
+                for fi, (name, raw) in enumerate(files_in):
+                    cloud.archive_upload(subject, "inbox", name, raw)
+                    is_img = name.lower().endswith(IMAGE_EXT)
+                    res = _scan_one(name, raw, is_img, cache, prog=lambda d, n, fi=fi, name=name:
+                                    bar.progress((fi + d / max(n, 1)) / len(files_in),
+                                                 text=f"읽는 중 {fi + 1}/{len(files_in)} · "
+                                                      f"{name} {d}/{n}쪽"))
+                    out.append({"name": name, "raw": raw, "res": res, "hw": is_img})
+                bar.progress(1.0, text="분류 중…")
+                tag_model = cloud.cfg("OPENAI_TAG_MODEL") or "gpt-4o-mini"
+                with ThreadPoolExecutor(max_workers=6) as ex:
+                    tags = list(ex.map(lambda f: classify(
+                        f["name"], f["res"], okey_in or None, tag_model,
+                        is_image=f["hw"]), out))
+                for f, t in zip(out, tags):
+                    f["tag"] = t
+                st.session_state[skey] = out
+                st.session_state[skey + "_sec"] = time.time() - t0
+                st.rerun()
+        else:
+            out = st.session_state[skey]
+            st.caption(f"{len(out)}개 파일 · {sum(len(f['res']) for f in out)}쪽 · "
+                       f"{st.session_state.get(skey + '_sec', 0):.0f}초 · "
+                       "확신 낮은 파일이 위에 있어요. 종류·과목·이름만 확인하세요.")
+            rows = []
+            for i, f in enumerate(out):
+                t = f["tag"]
+                stem = os.path.splitext(f["name"])[0]
+                rows.append({
+                    "#": i, "넣기": True, "파일": f["name"],
+                    "종류": t["category"],
+                    "과목": ("쪽별 자동" if t["category"] == "기출" and t["page_subjects"]
+                             else (t["subject"] or subject)),
+                    "이름": t["title"] or stem,
+                    "연도": t["year"], "급": t["level"] or "",
+                    "학년군": t["grade_band"], "영역": t["area"], "단원": t["unit"],
+                    "손글씨": f["hw"], "확신": int(round(t["confidence"] * 100)),
+                    "쪽": len(f["res"]), "근거": t["reason"],
+                })
+            df_in = pd.DataFrame(rows).sort_values("확신", kind="stable")
+            ed_in = st.data_editor(
+                df_in, hide_index=True, use_container_width=True,
+                disabled=["#", "파일", "확신", "쪽", "근거"],
+                column_config={
+                    "#": None,
+                    "종류": st.column_config.SelectboxColumn(options=CATEGORIES, required=True),
+                    "과목": st.column_config.SelectboxColumn(
+                        options=["쪽별 자동"] + SUBJECT_LIST, required=True),
+                    "급": st.column_config.SelectboxColumn(options=["", "초등", "중등", "특수"]),
+                    "연도": st.column_config.NumberColumn(min_value=2000, max_value=2035,
+                                                        step=1, format="%d"),
+                    "확신": st.column_config.ProgressColumn(min_value=0, max_value=100,
+                                                          format="%d%%"),
+                    "근거": st.column_config.TextColumn(width="large"),
+                },
+                key=f"in_editor_{sig_in}")
+            st.caption("'쪽별 자동'은 기출에서만 의미가 있어요(쪽마다 판정된 과목으로 분배). "
+                       "손글씨 체크를 바꾸면 저장할 때 그 파일만 다시 읽어요.")
+            b1, b2 = st.columns(2)
+            if b2.button("🔄 처음부터 다시", key="in_reset"):
+                st.session_state.pop(skey, None)
+                st.rerun()
+            if b1.button("✅ 확인한 파일 전부 저장", type="primary", key="in_save"):
+                cache = ScanCache(paths.scan_cache_path())
+                bucket, warns = {}, []
+                for _, row in ed_in.iterrows():
+                    if not row["넣기"]:
+                        continue
+                    f = out[int(row["#"])]
+                    res = f["res"]
+                    if bool(row["손글씨"]) != f["hw"] and okey_in:
+                        res = _scan_one(f["name"], f["raw"], bool(row["손글씨"]), cache)
+                    cat, title = row["종류"], str(row["이름"]).strip() or f["name"]
+                    pick = row["과목"]
+                    main_subj = (pick if pick != "쪽별 자동"
+                                 else (f["tag"]["subject"] or subject))
+                    level = row["급"] if row["급"] in ("초등", "중등", "특수") else None
+                    for r in res:
+                        if r["skip"] or r.get("error") or not r["text"]:
+                            continue
+                        n = r["page_in_file"] + 1
+                        try:
+                            if cat == "기출":
+                                if pd.isna(row["연도"]):
+                                    warns.append(f"{f['name']}: 기출인데 연도가 없어 건너뜀")
+                                    break
+                                subj = (f["tag"]["page_subjects"].get(n, main_subj)
+                                        if pick == "쪽별 자동" else pick)
+                                rec = Record(text=r["text"], layer="L1_pattern", subject=subj,
+                                             source=f"{title} p.{n}", year=int(row["연도"]),
+                                             level=level or "초등",
+                                             code=r["codes"][0] if r["codes"] else None,
+                                             area=r["area"] or None)
+                                path = paths.l1_path(subj)
+                            else:
+                                is_cg = (cat == "교육과정_총론")
+                                subj = "공통" if is_cg else main_subj
+                                rec = Record(text=r["text"], layer="L2_corpus", subject=subj,
+                                             source=f"{title} p.{n}", doc_type=cat,
+                                             code=r["codes"][0] if r["codes"] else None,
+                                             concepts=r.get("concepts") or None,
+                                             grade_band=str(row["학년군"] or "") or None,
+                                             area=(r["area"] or str(row["영역"] or "") or None),
+                                             unit=str(row["단원"] or "") or None)
+                                path = (paths.common_chongron_path() if is_cg
+                                        else paths.l2_path(subj))
+                            bucket.setdefault(path, []).append(rec)
+                        except Exception as e:
+                            warns.append(f"{f['name']} p.{n}: {e}")
+                summary = []
+                for path, recs in bucket.items():
+                    merged, added = merge_new(load_records_pkl(path), recs)
+                    if added:
+                        save_records_pkl(merged, path)
+                    summary.append(f"{os.path.basename(path).replace('.pkl', '')} +{added}쪽")
+                for w in warns[:10]:
+                    st.warning(w)
+                if summary:
+                    st.session_state["in_summary"] = summary
+                    st.session_state.pop(skey, None)
+                    st.rerun()
+
 
 # ══════════════════════════════════════════════════════════════
 # 탭 L2 — 자료 입력·학습
@@ -207,8 +453,7 @@ with tab2:
     st.write(f"현재 저장된 자료: **{len(l2)}건**")
 
     # ── 파일 업로드(pdf/docx/txt) + 자료종류·개념 태깅 ────────
-    with st.expander("📄 파일로 자료 넣기 (pdf / docx / txt)", expanded=False):
-        from file_ingest import ingest
+    with st.expander("📄 파일로 자료 넣기 (pdf · 사진 · 손글씨 · docx · txt)", expanded=False):
         from schema import DOC_TYPES
         from concept_dict import ConceptDict
 
@@ -217,7 +462,7 @@ with tab2:
         dtc1, dtc2 = st.columns(2)
         doc_type = dtc1.selectbox(
             "자료 종류(필수)",
-            ["교육과정_성취기준", "지도서_각론", "지도서_총론", "교육과정_총론"],
+            ["교육과정_성취기준", "지도서_각론", "지도서_총론", "교육과정_총론", "개인_필기"],
             key="l2_doctype")
         fsrc = dtc2.text_input("출처(필수)", key="l2_fsrc",
                                placeholder="국어 지도서 각론 3-1")
@@ -253,48 +498,53 @@ with tab2:
                 else:
                     st.warning("이미 있는 개념이거나 빈 값")
 
-        up = st.file_uploader("자료 파일", type=["pdf", "docx", "txt"], key="l2_file")
-        if up is not None:
+        ups = st.file_uploader(
+            "자료 파일 (여러 개 가능 · 폰으로 찍은 필기 사진도 OK)",
+            type=["pdf", "docx", "txt", "jpg", "jpeg", "png", "webp", "heic"],
+            accept_multiple_files=True, key="l2_file")
+        _has_img = any(u.name.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".heic"))
+                       for u in (ups or []))
+        hw = st.checkbox("✍️ 손글씨 포함 (한글 필기·여백 메모까지 정밀 판독)",
+                         value=(doc_type == "개인_필기" or _has_img), key="l2_hw")
+        if ups:
             try:
-                _raw = up.getvalue()
-                cloud.archive_upload(subject, "L2_corpus", up.name, _raw)
-                items = ingest(up.name, _raw)
-                st.write(f"**추출된 항목 {len(items)}개** — 넣을 것만 체크하고 수정하세요")
-                import pandas as pd
-                df = pd.DataFrame([{"넣기": True, "문장": t, "코드": c or ""}
-                                   for t, c in items])
-                edited = st.data_editor(df, use_container_width=True,
-                                        num_rows="dynamic", key="l2_editor")
-                if st.button("체크한 항목 저장", type="primary", key="l2_file_save"):
+                for _u in ups:
+                    cloud.archive_upload(subject, "L2_corpus", _u.name, _u.getvalue())
+                edited, res = page_scan_ui("l2", ups, cdict.names(), handwriting=hw)
+                if edited is not None and st.button("체크한 쪽 저장", type="primary",
+                                                    key="l2_file_save"):
                     if not fsrc.strip():
                         st.error("출처는 필수입니다.")
                     else:
-                        # 총론은 공통 pkl, 나머지는 과목 pkl
                         target_path = (paths.common_chongron_path()
                                        if doc_type == "교육과정_총론"
                                        else paths.l2_path(subject))
-                        target_l2 = load_records_pkl(target_path)
-                        added = 0
+                        new = []
                         for _, row in edited.iterrows():
-                            if not row["넣기"] or not str(row["문장"]).strip():
+                            text = str(row["본문"]).strip()
+                            if not row["넣기"] or not text:
                                 continue
+                            pg = int(row["쪽"])
+                            codes = [c.strip() for c in str(row["코드"]).split(",") if c.strip()]
+                            _pl = (f"{res[pg - 1]['name']} " if len(ups) > 1 else "")
+                            concepts = sorted(set(chosen_concepts) |
+                                              set(res[pg - 1].get("concepts") or []))
                             try:
-                                target_l2.append(Record(
-                                    text=str(row["문장"]).strip(), layer="L2_corpus",
-                                    subject=save_subject, source=fsrc.strip(),
-                                    code=str(row["코드"]).strip() or None,
-                                    doc_type=doc_type,
-                                    concepts=chosen_concepts or None,
-                                    grade_band=gb or None, area=ar or None,
+                                new.append(Record(
+                                    text=text, layer="L2_corpus", subject=save_subject,
+                                    source=f"{fsrc.strip()} {_pl}p.{pg}",
+                                    code=codes[0] if codes else None,
+                                    doc_type=doc_type, concepts=concepts or None,
+                                    grade_band=gb or None,
+                                    area=(str(row["영역"]).strip() or ar or None),
                                     unit=unit or None, model=model or None))
-                                added += 1
                             except Exception as e:
-                                st.warning(f"거부: {str(row['문장'])[:20]} — {e}")
-                        save_records_pkl(target_l2, target_path)
-                        st.success(f"{added}건 저장 → {os.path.basename(target_path)}")
-                        st.rerun()
+                                st.warning(f"{pg}쪽 거부 — {e}")
+                        merged, added = merge_new(load_records_pkl(target_path), new)
+                        save_records_pkl(merged, target_path)
+                        st.success(f"{added}쪽 저장 → {os.path.basename(target_path)}")
             except Exception as e:
-                st.error(f"추출 실패: {e}")
+                st.error(f"스캔 실패: {e}")
 
     with st.expander("➕ 직접 입력", expanded=(len(l2) == 0)):
         c1, c2 = st.columns([3, 1])
@@ -394,66 +644,78 @@ with tab1:
     st.write(f"저장된 기출: **{len(l1)}건**")
 
     # ── 기출 파일 업로드 (초등: 통짜 시험지 → 문항 분할) ──────
-    with st.expander("📄 기출 파일로 넣기 (pdf / docx / txt)", expanded=False):
-        from file_ingest import extract_text, split_questions_rule, \
-            split_questions_llm, is_scanned_pdf
-        st.caption("초등은 한 시험에 전과목이 섞임 → 연도 단위로 통짜 업로드하면 "
-                   "문항으로 잘라준다. 중등/특수는 과목별 시험이라 그대로.")
-        upq = st.file_uploader("기출 시험지 파일", type=["pdf", "docx", "txt"], key="l1_file")
+    with st.expander("📄 기출 시험지 통째로 넣기 (pdf · 사진)", expanded=False):
+        st.caption("시험지를 나누지 않고 통째로 올려요. 검토 단계 없이 바로 저장되고, "
+                   "분석용으로만 내부에서 쪽 단위로 쓰입니다. 스캔본·사진도 OK.")
+        upqs = st.file_uploader("기출 시험지 (PDF 1개, 또는 시험지 사진 여러 장)",
+                                type=["pdf", "docx", "txt", "jpg", "jpeg", "png", "webp", "heic"],
+                                accept_multiple_files=True, key="l1_file")
         fc1, fc2, fc3 = st.columns(3)
         fyear = fc1.number_input("출제연도", 2000, 2030, 2023, key="l1_fy")
         flevel = fc2.selectbox("급", ["초등", "중등", "특수", "공통"], key="l1_fl")
-        fqsrc = fc3.text_input("출처(필수)", key="l1_fs", placeholder="2023 초등임용")
+        fqsrc = fc3.text_input("시험 이름(필수)", key="l1_fs", placeholder="2023 초등임용 1교시")
+        fhw = st.checkbox("✍️ 손글씨 있음 (내가 푼 흔적·메모가 적힌 시험지)", key="l1_hw")
+        okey_l1 = api_key("OpenAI Key(스캔용)", "OPENAI_API_KEY", "l1_scankey")
+        if upqs and st.button("📥 기출 통째로 저장", type="primary", key="l1_file_save"):
+            if not fqsrc.strip():
+                st.error("시험 이름(출처)은 필수입니다.")
+            elif any(r.source.startswith(fqsrc.strip() + " p.") for r in l1):
+                st.error(f"'{fqsrc.strip()}'은 이미 있어요. 다시 넣으려면 아래 목록에서 먼저 삭제하세요.")
+            else:
+                from page_scan import build_pages, scan_pages, ScanCache
+                files = [(u.name, u.getvalue()) for u in upqs]
+                for _n, _r in files:
+                    cloud.archive_upload(subject, "L1_exam", _n, _r)
+                bar = st.progress(0.0, text="스캔 중…")
+                res = scan_pages(build_pages(files), okey_l1 or None, [],
+                                 cache=ScanCache(paths.scan_cache_path()),
+                                 model=cloud.cfg("OPENAI_HANDWRITING_MODEL" if fhw
+                                                 else "OPENAI_SCAN_MODEL"),
+                                 handwriting=fhw,
+                                 progress=lambda d, n: bar.progress(d / max(n, 1),
+                                                                    text=f"{d}/{n}쪽"))
+                new = []
+                for r in res:
+                    if r["skip"] or r.get("error") or not r["text"]:
+                        continue
+                    try:
+                        new.append(Record(
+                            text=r["text"], layer="L1_pattern", subject=subject,
+                            source=f"{fqsrc.strip()} p.{r['page'] + 1}",
+                            year=int(fyear), level=flevel,
+                            code=r["codes"][0] if r["codes"] else None,
+                            area=r["area"] or None))
+                    except Exception as e:
+                        st.warning(f"{r['page'] + 1}쪽 거부 — {e}")
+                bad = [r["page"] + 1 for r in res if r.get("error") or r.get("note")]
+                if new:
+                    l1, _ = merge_new(l1, new)
+                    save_records_pkl(l1, paths.l1_path(subject))
+                    st.success(f"'{fqsrc.strip()}' 저장 ({len(new)}쪽)")
+                if bad:
+                    st.warning(f"못 읽은 쪽: {bad} — 키 확인 후 같은 이름으로 삭제·재업로드")
 
-        use_llm_split = st.checkbox("LLM으로 문항 분할(더 정확, OpenAI 키 필요)",
-                                    key="l1_llmsplit")
-        split_key = ""
-        if use_llm_split:
-            split_key = api_key("OpenAI Key(분할용)", "OPENAI_API_KEY", "l1_splitkey")
-
-        if upq is not None:
-            try:
-                _raw = upq.getvalue()
-                cloud.archive_upload(subject, "L1_exam", upq.name, _raw)
-                raw_text = extract_text(upq.name, _raw)
-                if is_scanned_pdf(raw_text):
-                    st.error("이 PDF는 텍스트가 추출되지 않습니다(스캔본으로 보임). "
-                             "OCR이 필요해요 — 텍스트 PDF로 다시 저장하거나 OCR 후 넣어주세요.")
-                else:
-                    if use_llm_split and split_key:
-                        items = split_questions_llm(raw_text, split_key)
-                    else:
-                        items = split_questions_rule(raw_text)
-                    st.write(f"**분할된 문항 후보 {len(items)}개** — "
-                             "제목·안내문은 체크 해제, 묶음문항은 행을 나눠서 편집")
-                    import pandas as pd
-                    df = pd.DataFrame([{"넣기": True, "문항": t} for t in items])
-                    edited = st.data_editor(df, use_container_width=True,
-                                            num_rows="dynamic", key="l1_editor")
-                    st.caption("💡 초등 통짜 기출은 지금 subject='{}'로 저장됩니다. "
-                               "과목 자동분류는 다른 과목 SOM이 갖춰지면 붙일 수 있어요."
-                               .format(subject))
-                    if st.button("체크한 문항 저장", type="primary", key="l1_file_save"):
-                        if not fqsrc.strip():
-                            st.error("출처는 필수입니다.")
-                        else:
-                            added = 0
-                            for _, row in edited.iterrows():
-                                if not row["넣기"] or not str(row["문항"]).strip():
-                                    continue
-                                try:
-                                    l1.append(Record(
-                                        text=str(row["문항"]).strip(), layer="L1_pattern",
-                                        subject=subject, source=fqsrc.strip(),
-                                        year=int(fyear), level=flevel))
-                                    added += 1
-                                except Exception as e:
-                                    st.warning(f"거부: {str(row['문항'])[:20]} — {e}")
-                            save_records_pkl(l1, paths.l1_path(subject))
-                            st.success(f"{added}건 저장 → {subject}_L1.pkl")
-                            st.rerun()
-            except Exception as e:
-                st.error(f"추출/분할 실패: {e}")
+    # ── 저장된 기출: 시험 단위로 통째로 보기 ───────────────────
+    _exams = {}
+    for r in l1:
+        name = r.source.rsplit(" p.", 1)[0] if " p." in r.source else r.source
+        _exams.setdefault(name, []).append(r)
+    if _exams:
+        with st.expander(f"🗂️ 저장된 기출 ({len(_exams)}개 시험)", expanded=False):
+            for name, rs in sorted(_exams.items(), key=lambda x: (-(x[1][0].year or 0), x[0])):
+                def _pg(r):
+                    t = r.source.rsplit(" p.", 1)
+                    return int(t[1]) if len(t) == 2 and t[1].isdigit() else 0
+                rs = sorted(rs, key=_pg)
+                st.markdown(f"**{name}** · {rs[0].year} {rs[0].level or ''} · {len(rs)}쪽")
+                v1, v2 = st.columns(2)
+                if v1.toggle("원문 보기", key=f"l1_view_{name}"):
+                    st.markdown("\n\n---\n\n".join(r.text for r in rs))
+                if v2.button("🗑️ 이 시험 삭제", key=f"l1_del_{name}"):
+                    ids = {r.rec_id for r in rs}
+                    l1 = [r for r in l1 if r.rec_id not in ids]
+                    save_records_pkl(l1, paths.l1_path(subject))
+                    st.rerun()
 
     with st.expander("➕ 직접 입력", expanded=(len(l1) == 0)):
         qtxt = st.text_area("기출 문항", height=80,
