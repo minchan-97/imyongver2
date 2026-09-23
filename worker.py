@@ -29,6 +29,19 @@ else:
     print(f"동기화: 내려받음 {len(rep['down'])} · 올림 {len(rep['up'])}")
 
 r = selfcheck.run(a.subject, fix=a.fix)
+
+# 새 기출이 들어왔으면 대기 중인 경향 예측을 자동 채점 (LLM 호출 없음)
+try:
+    import trend_lab as tl
+    from schema import load_records_pkl
+    _lab = tl.load_lab(a.subject)
+    _n = tl.score(a.subject, load_records_pkl(paths.l1_path(a.subject)),
+                  _lab["predictions"], _lab)
+    if _n:
+        tl.save_lab(a.subject, _lab)
+    print(f"경향 예측 채점: {_n}건 · 누적 {tl.summary(_lab['predictions'])}")
+except Exception as e:
+    print("경향 채점 건너뜀:", e)
 print(json.dumps({k: v for k, v in r.items() if k != "hygiene"},
                  ensure_ascii=False, indent=2, default=str))
 print("경고:", r["alerts"] or "없음")
