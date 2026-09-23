@@ -10,6 +10,7 @@ paths.py — 과목별 데이터/산출물 pkl 경로를 한 곳에서 관리.
 
 과목만 바꾸면 다른 과목으로 그대로 복제된다.
 """
+CORE_VERSION = "13.2"
 import os
 
 BASE = os.path.join(os.path.dirname(__file__), "..", "data")
