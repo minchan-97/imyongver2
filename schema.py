@@ -6,6 +6,7 @@ schema.py — 모든 자료의 공통 레코드 구조.
 어디서 왔는지를 들고 있어야 한다.
 """
 from __future__ import annotations
+CORE_VERSION = "13.2"
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 import json
