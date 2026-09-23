@@ -120,32 +120,24 @@ def merge_new(existing, new_records):
 
 
 # ── core 파일 버전 확인 (app.py만 새로 올리고 core/를 안 올린 경우 방지) ──
-_NEEDS = {
-    "cloud": ["list_uploads", "download_upload", "list_local_names", "sync"],
-    "paths": ["all_paths", "discover_subjects", "scan_cache_path", "drive_state_path"],
-    "page_scan": ["build_pages", "scan_pages", "looks_broken"],
-    "auto_tag": ["classify"],
-    "drive": ["list_folder", "download", "DriveState", "dedupe"],
-    "resubject": ["audit", "tag_gaps", "propagate_tags", "undetermined_docs",
-                  "judge_docs_llm", "apply_doc_decisions"],
-    "maintenance": ["run", "STEPS", "APP_STEPS", "is_garbage", "subject_list"],
-    "selfcheck": ["run", "retrain", "auto_epochs", "load_history"],
-    "daily_digest": ["build", "mark_read", "recent", "today_str"],
-    "trend_lab": ["stats", "predict", "backtest", "summary"],
-    "labeler": ["label_records", "train_tagger", "tag"],
-    "ingest_queue": ["add", "pending", "run_queue", "load"],
-}
+APP_VERSION = "13.2"
+_CORE_MODULES = ["cloud", "paths", "schema", "page_scan", "auto_tag", "drive",
+                 "resubject", "maintenance", "selfcheck", "daily_digest",
+                 "trend_lab", "labeler", "ingest_queue", "file_ingest",
+                 "study_state", "concept_dict", "exam_practice", "passage_cluster",
+                 "embedding", "som", "korean_tokenizer"]
 _stale = []
-for _mod, _attrs in _NEEDS.items():
+for _mod in _CORE_MODULES:
     try:
         _m = __import__(_mod)
-        _missing = [x for x in _attrs if not hasattr(_m, x)]
-        if _missing:
-            _stale.append(f"core/{_mod}.py (없음: {', '.join(_missing)})")
+        _v = getattr(_m, "CORE_VERSION", None)
+        if _v != APP_VERSION:
+            _stale.append(f"core/{_mod}.py (버전 {_v or '없음'} ≠ {APP_VERSION})")
     except Exception as _e:
         _stale.append(f"core/{_mod}.py (불러오기 실패: {_e})")
 if _stale:
-    st.error("core 파일이 app.py와 버전이 안 맞아요. 아래 파일을 같은 버전으로 올려주세요:\n\n"
+    st.error(f"core 파일이 app.py(v{APP_VERSION})와 버전이 안 맞아요. "
+             "아래 파일을 같은 버전으로 올려주세요:\n\n"
              + "\n".join("- " + s for s in _stale)
              + "\n\n가장 확실한 방법: zip을 풀어 폴더째 덮어쓰기")
     st.stop()
@@ -1886,3 +1878,4 @@ with tabp:
                     for q in s["questions"]:
                         st.write(f"- {q}")
                 st.caption(f"출처: {s['source']}")
+
