@@ -16,6 +16,7 @@ embedding.py — 단어 임베딩을 '한 번만' 학습해서 고정(freeze)한
   CPU only, 외부 패키지 없음(numpy만). 결정론적(seed 고정).
 """
 from __future__ import annotations
+CORE_VERSION = "13.2"
 import numpy as np
 import pickle
 from collections import Counter
