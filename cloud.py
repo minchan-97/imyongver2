@@ -330,32 +330,35 @@ def sync_records(path: str, records) -> bool:
 
 
 # ── 원본 파일 보관 ────────────────────────────────────────────
-_ARCHIVED = set()
+_ARCHIVED = {}
 
-def archive_upload(subject: str, kind: str, filename: str, raw: bytes) -> bool:
-    """업로드한 원본(pdf/docx/txt)을 한 번만 서버에 보관. 같은 파일은 재업로드 안 함."""
+def archive_upload(subject: str, kind: str, filename: str, raw: bytes):
+    """
+    업로드한 원본을 한 번만 서버에 보관. 같은 파일은 재업로드 안 함.
+    반환: 보관 경로(str) 또는 None — 워커에 스캔을 맡길 때 이 경로를 쓴다.
+    """
     c = client()
     if not c or not raw:
-        return False
+        return None
     sha = _sha(raw)
     tag = (subject, sha)
     if tag in _ARCHIVED:
-        return True
+        return _ARCHIVED[tag]
     try:
         hit = (c.table("uploads").select("id").eq("subject", subject)
                .eq("sha256", sha).limit(1).execute())
+        ext = os.path.splitext(filename)[1].lower()
+        ext = ext if ext.isascii() else ""
+        spath = f"{slug(subject)}/{storage_key(kind)}/{sha[:16]}{ext}"
         if not hit.data:
-            ext = os.path.splitext(filename)[1].lower()
-            ext = ext if ext.isascii() else ""
-            spath = f"{slug(subject)}/{storage_key(kind)}/{sha[:16]}{ext}"
             c.storage.from_(BUCKET_UP).upload(
                 spath, raw, {"content-type": "application/octet-stream", "upsert": "true"})
             c.table("uploads").insert({
                 "subject": subject, "kind": kind, "original_name": filename,
                 "storage_path": spath, "sha256": sha, "size_bytes": len(raw),
                 "created_epoch": time.time()}).execute()
-        _ARCHIVED.add(tag)
-        return True
+        _ARCHIVED[tag] = spath
+        return spath
     except Exception as e:
         _err(f"원본보관 {filename}", e)
-        return False
+        return None
