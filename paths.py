@@ -44,7 +44,10 @@ def all_paths(subject):
             emb_path(subject), som_path(subject), study_path(subject),
             concept_dict_path(subject), exam_path(subject),
             exam_weak_path(subject), passage_path(subject),
-            common_chongron_path(), scan_cache_path()]
+            common_chongron_path(), scan_cache_path(), drive_state_path()]
 
 
 def scan_cache_path(): return _p("scan_cache.pkl")   # 페이지 스캔 결과 캐시(전 과목 공용)
+
+
+def drive_state_path(): return _p("drive_state.pkl")  # 드라이브에서 가져온 파일 기록
