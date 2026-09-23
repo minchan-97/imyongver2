@@ -21,7 +21,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "layer2_corpus"))
 sys.path.append(os.path.join(os.path.dirname(__file__), "layer3_trend"))
 sys.path.append(os.path.join(os.path.dirname(__file__), "layer4_generate"))
 
-from schema import Record, save_records_pkl, load_records_pkl, LEVELS
+from schema import Record, save_records_pkl, load_records_pkl, LEVELS, DOC_TYPES
 from embedding import FrozenEmbedding, train_embedding
 from som import SOM
 from korean_tokenizer import tokenize
@@ -465,6 +465,55 @@ with tabin:
                     load_engine.clear()
                     st.success(f"{n}쪽 이동 완료 — 옮긴 과목에서 다시 학습(임베딩·SOM)을 권해요")
                     st.rerun()
+
+        st.markdown("---")
+        st.caption("**🤖 애매한 문서 LLM 판정** — 마인드맵·개념도·필기처럼 낱말만 남은 자료는 "
+                   "규칙(코드·고유어휘)으로 못 갈라요. 문서 단위로 LLM에 한 번씩만 물어봐요.")
+        _okey_rs = api_key("OpenAI Key", "OPENAI_API_KEY", "rs_key")
+        _undet = rsj.undetermined_docs(None if _scope_all else [subject])
+        st.caption(f"규칙으로 못 가른 문서 {len(_undet)}개 "
+                   f"({sum(d['pages'] for d in _undet)}쪽)")
+        if _undet and _okey_rs and st.button("🤖 LLM으로 판정", key="rs_llm"):
+            bar = st.progress(0.0, text="판정 중…")
+            st.session_state["rs_llm_rows"] = rsj.judge_docs_llm(
+                _undet, _okey_rs, cloud.cfg("OPENAI_TAG_MODEL") or "gpt-4o-mini",
+                progress=lambda d, n: bar.progress(d / max(n, 1), text=f"{d}/{n} 문서"))
+            st.rerun()
+        _lrows = st.session_state.get("rs_llm_rows")
+        if _lrows:
+            import pandas as pd
+            _ldf = pd.DataFrame([{
+                "#": i, "적용": r["conf"] >= 0.6, "문서": r["source"], "쪽": r["pages"],
+                "지금": r["current"], "과목": r["proposed"] or r["current"],
+                "영역": r["area"], "종류": r["doc_type"] or "",
+                "확신": int(r["conf"] * 100), "근거": r["evidence"][0]}
+                for i, r in enumerate(_lrows)])
+            _led = st.data_editor(
+                _ldf, hide_index=True, use_container_width=True,
+                disabled=["#", "문서", "쪽", "지금", "확신", "근거"],
+                column_config={"#": None,
+                               "과목": st.column_config.SelectboxColumn(
+                                   options=SUBJECT_LIST, required=True),
+                               "종류": st.column_config.SelectboxColumn(
+                                   options=[""] + sorted(DOC_TYPES)),
+                               "확신": st.column_config.ProgressColumn(
+                                   min_value=0, max_value=100, format="%d%%"),
+                               "근거": st.column_config.TextColumn(width="large")},
+                key="rs_llm_editor")
+            if st.button("✅ 체크한 문서 적용", type="primary", key="rs_llm_apply"):
+                picks = []
+                for _, row in _led.iterrows():
+                    if row["적용"]:
+                        r = dict(_lrows[int(row["#"])])
+                        r["proposed"] = row["과목"]
+                        r["area"] = str(row["영역"] or "").strip()
+                        r["doc_type"] = row["종류"] or None
+                        picks.append(r)
+                mv, tg = rsj.apply_doc_decisions(picks)
+                st.session_state.pop("rs_llm_rows", None)
+                load_engine.clear()
+                st.success(f"{mv}쪽 이동 · {tg}쪽 영역 채움")
+                st.rerun()
 
         st.markdown("---")
         if not hasattr(rsj, "tag_gaps"):      # core/resubject.py가 옛 버전일 때
