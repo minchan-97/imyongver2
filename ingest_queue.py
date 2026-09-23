@@ -14,6 +14,7 @@ ingest_queue.py — 스캔까지 워커에 맡기기.
 사람이 거는 일(무엇을 다시 읽을지)과 기계가 하는 일(스캔·분류)을 나눠 둔 것.
 """
 from __future__ import annotations
+CORE_VERSION = "13.2"
 import os, time, pickle, hashlib
 
 import paths
