@@ -14,6 +14,7 @@ page_scan.py — 파일을 '페이지 통째로' 스캔해서 읽는다.
   - docx/txt는 페이지가 없으니 일정 길이로 묶어 '페이지'로 취급(LLM 불필요).
 """
 from __future__ import annotations
+CORE_VERSION = "13.2"
 import io, os, re, json, time, base64, pickle, hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
