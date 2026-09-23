@@ -341,7 +341,7 @@ with tabin:
                 if x.strip()]
     _gkey, _gsa = cloud.cfg("GOOGLE_API_KEY"), cloud.cfg("GOOGLE_SERVICE_ACCOUNT")
     with st.expander(f"📁 구글 드라이브에서 가져오기 ({len(_folders)}개 폴더)",
-                     expanded=bool(_folders) and not st.session_state.get("in_files")):
+                     expanded=bool(_folders) and not (st.session_state.get("in_files") or [])):
         if not _folders:
             st.caption("secrets에 DRIVE_FOLDERS = \"폴더 링크\" 를 넣으면 여기서 바로 가져올 수 있어요 "
                        "(여러 개면 줄바꿈으로 구분).")
@@ -946,7 +946,7 @@ with tablab:
                         subject, l1, okey_lab, lab_model,
                         progress=lambda i, n, y: bar.progress(i / max(n, 1),
                                                               text=f"{y}년 예측 중… ({i}/{n})"))
-                    st.session_state["lab_bt"] = res
+                    st.session_state["lab_bt_res"] = res
                     st.rerun()
                 except Exception as e:
                     st.error(f"백테스트 실패: {e}")
@@ -965,14 +965,18 @@ with tablab:
                 except Exception as e:
                     st.error(f"예측 실패: {e}")
 
-        if st.session_state.get("lab_bt"):
+        _bt = st.session_state.get("lab_bt_res")
+        if not isinstance(_bt, list):          # 앱을 껐다 켜도 마지막 결과는 원장에서 복구
+            _runs = [r for r in _lab.get("runs", []) if r.get("kind") == "backtest"]
+            _bt = _runs[-1]["result"] if _runs else None
+        if isinstance(_bt, list) and _bt:
             st.write("**백테스트 결과 (연도별)**")
             st.dataframe([{"연도": r.get("year"), "예측수": r.get("n"),
                            "적중률": (f"{r['hit_rate']:.0%}" if r.get("hit_rate") is not None else "—"),
                            "Brier": (f"{r['brier']:.3f}" if r.get("brier") is not None else "—"),
                            "기준선": (f"{r['brier_baseline']:.3f}" if r.get("brier_baseline") is not None else "—"),
                            "오류": r.get("error", "")}
-                          for r in st.session_state["lab_bt"]],
+                          for r in _bt],
                          use_container_width=True, hide_index=True)
 
         _rules = tl.top_rules(_lab, n=10, min_n=1)
