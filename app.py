@@ -536,6 +536,61 @@ with tabin:
         else:
             st.caption(f"{subject}에는 채울 게 없어요.")
 
+    # ── 자료 정비 (전 과목) ────────────────────────────────────
+    import maintenance as mt
+    with st.expander("🧹 자료 정비 — 긴 쪽 분할 · 중복 · 잘못된 태그 · 영역 라벨 · 재학습"):
+        st.caption("한 기록이 수천 자면 임베딩 한 벡터에 개념이 수십 개 뭉개져서 지도가 흐려져요. "
+                   "문단 단위로 나누고, 중복을 빼고, 일괄로 잘못 붙은 태그를 정리한 뒤 "
+                   "비어 있는 영역을 라벨링하고 다시 학습해요. 먼저 미리보기로 확인하세요.")
+        mc1, mc2 = st.columns([2, 1])
+        _subjects = mt.subject_list(None)
+        _pick = mc1.multiselect("대상 과목", _subjects, default=_subjects, key="mt_subj")
+        _steps = mc2.multiselect("단계", list(mt.STEPS), default=list(mt.APP_STEPS),
+                                 key="mt_steps")
+        st.caption("⏱️ 재학습(retrain)은 자료가 많으면 몇 분씩 걸려요. "
+                   "여기서는 빼두고 새벽 워커에 맡기는 걸 권해요 "
+                   "(워커는 기준 미달일 때 알아서 다시 학습해요).")
+        _okey_mt = api_key("OpenAI Key(영역 라벨용)", "OPENAI_API_KEY", "mt_key")
+        _limit = st.number_input("라벨 한도(과목당 쪽)", 50, 2000, 300, 50, key="mt_lim")
+        m1, m2 = st.columns(2)
+        if m1.button("🔍 미리보기", key="mt_dry"):
+            st.session_state["mt_rep"] = {
+                s: mt.run(s, tuple(_steps), True, _okey_mt or None,
+                          cloud.cfg("OPENAI_TAG_MODEL") or "gpt-4o-mini", int(_limit))
+                for s in _pick}
+        if m2.button("⚙️ 실제로 정비", type="primary", key="mt_go"):
+            bar = st.progress(0.0, text="정비 중…")
+            out = {}
+            for i, s in enumerate(_pick):
+                bar.progress(i / max(len(_pick), 1), text=f"{s} 정비 중…")
+                out[s] = mt.run(s, tuple(_steps), False, _okey_mt or None,
+                                cloud.cfg("OPENAI_TAG_MODEL") or "gpt-4o-mini",
+                                int(_limit))
+            st.session_state["mt_rep"] = out
+            load_engine.clear()
+            st.success("정비 완료 — 자료집을 다시 편성하면 개념 단위로 올라와요")
+            st.rerun()
+        _rep = st.session_state.get("mt_rep")
+        if _rep:
+            rows = []
+            for s, r in _rep.items():
+                sp = r.get("split", {})
+                rows.append({"과목": s, "미리보기" if r["dry_run"] else "적용": "○",
+                             "태그정리": len(r.get("fix_tags", [])),
+                             "깨진글자": r.get("garbage", {}).get("n", 0),
+                             "중복": r.get("dedupe", 0),
+                             "분할 대상": sp.get("split", 0),
+                             "조각": f"{sp.get('before', 0)}→{sp.get('after', 0)}",
+                             "영역 라벨": r.get("label", 0),
+                             "재학습": ("함" if r.get("retrain") else "")})
+            st.dataframe(rows, use_container_width=True, hide_index=True)
+            for s, r in _rep.items():
+                for e in r.get("split", {}).get("examples", [])[:3]:
+                    st.caption(f"{s}: {e['source'][:40]} — {e['len']:,}자 → {e['parts']}조각")
+            if any(r["dry_run"] for r in _rep.values()):
+                st.info("미리보기예요. '실제로 정비'를 눌러야 바뀌어요. "
+                        "바꾸기 전 로컬 백업(data/backup/)과 서버 버전 백업이 남아요.")
+
     # ── 구글 드라이브에서 가져오기 ─────────────────────────────
     import drive as gdrive
     _folders = [x for x in re.split(r"[\n,]+", str(cloud.cfg("DRIVE_FOLDERS") or
@@ -553,6 +608,8 @@ with tabin:
                            "'링크가 있는 모든 사용자 - 뷰어'여야 해요. "
                            "(구글이 임베드 경로를 바꾸면 안 될 수 있어요. "
                            "무료 GOOGLE_API_KEY를 넣으면 안정적이에요.)")
+            _force = st.checkbox("이미 가져온 파일도 다시 가져오기 (재스캔용)",
+                                 key="dr_force")
             if st.button("🔄 폴더 훑어보기", key="dr_scan"):
                 try:
                     _all = []
@@ -568,8 +625,13 @@ with tabin:
             _lst = st.session_state.get("dr_list")
             if _lst is not None:
                 dstate = gdrive.DriveState(paths.drive_state_path())
-                _new = [f for f in _lst if dstate.is_new(f)]
-                st.caption(f"폴더 안 파일 {len(_lst)}개 · 새 파일 {len(_new)}개")
+                _new = _lst if _force else [f for f in _lst if dstate.is_new(f)]
+                st.caption(f"폴더 안 파일 {len(_lst)}개 · "
+                           + ("전부 다시 가져오기 모드" if _force
+                              else f"새 파일 {len(_new)}개"))
+                if _force:
+                    st.caption("깨진 PDF(CID 글꼴)는 OpenAI 키를 넣고 다시 읽으면 살아나요. "
+                               "다시 넣기 전에 '자료 정비 → garbage'로 옛 기록을 지우세요.")
                 _sel = st.multiselect("가져올 파일", [f["path"] for f in _new],
                                       default=[f["path"] for f in _new], key="dr_sel")
                 if _sel and st.button(f"⬇️ {len(_sel)}개 가져오기", type="primary", key="dr_get"):
@@ -584,10 +646,37 @@ with tabin:
                     dstate.save()
                     st.session_state["in_drive_files"] = got
                     st.rerun()
+    # ── 서버에 보관된 원본 다시 가져오기 ───────────────────────
+    with st.expander("☁️ 서버에 보관된 원본 다시 가져오기"):
+        if not cloud.enabled():
+            st.caption("Supabase 연결이 있어야 보관된 원본을 볼 수 있어요.")
+        else:
+            _ups = cloud.list_uploads()
+            if not _ups:
+                st.caption("보관된 원본이 없어요. (앱으로 올린 파일은 자동 보관돼요)")
+            else:
+                st.caption(f"보관된 원본 {len(_ups)}개 — 깨져서 다시 읽어야 하는 파일을 고르세요. "
+                           "가져오면 아래 목록에 합쳐져 스캔·분류로 이어져요.")
+                _lbl = {f"{u['original_name']}  ·  {u['subject']}/{u.get('kind', '')}"
+                        f"  ·  {u.get('size_bytes', 0) // 1024}KB": u for u in _ups}
+                _sel_up = st.multiselect("원본 파일", list(_lbl), key="up_sel")
+                if _sel_up and st.button(f"⬇️ {len(_sel_up)}개 다시 가져오기", key="up_get"):
+                    bar, got = st.progress(0.0, text="내려받는 중…"), []
+                    for i, k in enumerate(_sel_up):
+                        u = _lbl[k]
+                        raw = cloud.download_upload(u["storage_path"])
+                        if raw:
+                            got.append((u["original_name"], raw))
+                        bar.progress((i + 1) / len(_sel_up))
+                    st.session_state["in_drive_files"] = (
+                        st.session_state.get("in_drive_files") or []) + got
+                    st.rerun()
+
     _drive_files = st.session_state.get("in_drive_files") or []
     if _drive_files:
         c_d1, c_d2 = st.columns([3, 1])
-        c_d1.info(f"드라이브에서 가져온 파일 {len(_drive_files)}개가 아래 목록에 포함돼요.")
+        c_d1.info(f"가져온 파일 {len(_drive_files)}개가 아래 목록에 포함돼요 "
+                  "(드라이브·서버 보관본).")
         if c_d2.button("비우기", key="dr_clear"):
             st.session_state.pop("in_drive_files", None)
             st.session_state.pop("dr_list", None)
