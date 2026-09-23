@@ -119,6 +119,36 @@ def merge_new(existing, new_records):
     return existing + added, len(added)
 
 
+# ── core 파일 버전 확인 (app.py만 새로 올리고 core/를 안 올린 경우 방지) ──
+_NEEDS = {
+    "cloud": ["list_uploads", "download_upload", "list_local_names", "sync"],
+    "paths": ["all_paths", "discover_subjects", "scan_cache_path", "drive_state_path"],
+    "page_scan": ["build_pages", "scan_pages", "looks_broken"],
+    "auto_tag": ["classify"],
+    "drive": ["list_folder", "download", "DriveState", "dedupe"],
+    "resubject": ["audit", "tag_gaps", "propagate_tags", "undetermined_docs",
+                  "judge_docs_llm", "apply_doc_decisions"],
+    "maintenance": ["run", "STEPS", "APP_STEPS", "is_garbage", "subject_list"],
+    "selfcheck": ["run", "retrain", "auto_epochs", "load_history"],
+    "daily_digest": ["build", "mark_read", "recent", "today_str"],
+    "trend_lab": ["stats", "predict", "backtest", "summary"],
+    "labeler": ["label_records", "train_tagger", "tag"],
+}
+_stale = []
+for _mod, _attrs in _NEEDS.items():
+    try:
+        _m = __import__(_mod)
+        _missing = [x for x in _attrs if not hasattr(_m, x)]
+        if _missing:
+            _stale.append(f"core/{_mod}.py (없음: {', '.join(_missing)})")
+    except Exception as _e:
+        _stale.append(f"core/{_mod}.py (불러오기 실패: {_e})")
+if _stale:
+    st.error("core 파일이 app.py와 버전이 안 맞아요. 아래 파일을 같은 버전으로 올려주세요:\n\n"
+             + "\n".join("- " + s for s in _stale)
+             + "\n\n가장 확실한 방법: zip을 풀어 폴더째 덮어쓰기")
+    st.stop()
+
 # ── 접속 비밀번호 (배포 시 URL만 알면 누구나 자료를 바꿀 수 있으므로) ──
 _APP_PW = cloud.cfg("APP_PASSWORD")
 if _APP_PW and not st.session_state.get("_authed"):
@@ -516,10 +546,6 @@ with tabin:
                 st.rerun()
 
         st.markdown("---")
-        if not hasattr(rsj, "tag_gaps"):      # core/resubject.py가 옛 버전일 때
-            st.error("core/resubject.py가 이전 버전이에요. app.py와 core/ 파일을 "
-                     "같은 버전으로 함께 올려주세요.")
-            st.stop()
         _gaps = rsj.tag_gaps(subject)
         st.caption("**태그 채우기** — 같은 출처의 다른 쪽에는 있는데 이 쪽에는 없는 "
                    "영역·자료종류·학년군·단원을 다수결로 채워요. "
