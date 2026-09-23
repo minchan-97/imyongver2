@@ -133,6 +133,7 @@ _NEEDS = {
     "daily_digest": ["build", "mark_read", "recent", "today_str"],
     "trend_lab": ["stats", "predict", "backtest", "summary"],
     "labeler": ["label_records", "train_tagger", "tag"],
+    "ingest_queue": ["add", "pending", "run_queue", "load"],
 }
 _stale = []
 for _mod, _attrs in _NEEDS.items():
@@ -672,6 +673,62 @@ with tabin:
                     dstate.save()
                     st.session_state["in_drive_files"] = got
                     st.rerun()
+    # ── 워커에게 스캔 맡기기 ───────────────────────────────────
+    import ingest_queue as iq
+    with st.expander("🤖 워커에게 스캔 맡기기 (다시 읽기 예약)"):
+        st.caption("원본을 고르고 걸어두면 새벽 워커가 내려받아 비전으로 다시 읽고 "
+                   "분류해서 저장해요. 깨진 PDF(CID 글꼴)를 살릴 때 쓰세요. "
+                   "폰에서 큰 파일을 붙들고 있을 필요가 없어요.")
+        _q = iq.load()
+        _pend = iq.pending(_q)
+        if _pend:
+            st.info(f"대기 중 {len(_pend)}건: " + ", ".join(j["source"] for j in _pend[:5]))
+        _done = [j for j in _q["jobs"] if j["status"] in ("done", "error")][-5:]
+        if _done:
+            st.caption("최근 처리: " + " · ".join(
+                f"{j['source']}→" + (f"{j['result'].get('added', 0)}쪽"
+                                     if j["status"] == "done" else "실패")
+                for j in _done))
+        if not cloud.enabled():
+            st.caption("Supabase 연결이 있어야 원본을 워커가 내려받을 수 있어요.")
+        else:
+            _ups2 = cloud.list_uploads()
+            if not _ups2:
+                st.caption("보관된 원본이 없어요.")
+            else:
+                # 지금 깨져 있는 출처를 힌트로 보여줌
+                try:
+                    import maintenance as _mt2
+                    _bad = {}
+                    for g in _mt2.drop_garbage(subject, dry_run=True):
+                        b = g["source"].rsplit(" (", 1)[0].rsplit(" p.", 1)[0]
+                        _bad[b] = _bad.get(b, 0) + 1
+                    if _bad:
+                        st.warning("깨진 자료: " + ", ".join(f"{k} ({v}쪽)"
+                                                          for k, v in _bad.items()))
+                except Exception:
+                    _bad = {}
+                _lbl2 = {f"{u['original_name']} · {u['subject']}": u for u in _ups2}
+                qa, qb = st.columns(2)
+                _file = qa.selectbox("원본 파일", list(_lbl2), key="q_file")
+                _src = qb.text_input("저장될 출처 이름",
+                                     value=(list(_bad)[0] if _bad else
+                                            os.path.splitext(_file)[0] if _file else ""),
+                                     key="q_src")
+                qc, qd, qe = st.columns(3)
+                _qsub = qc.selectbox("과목(비우면 자동)", ["자동"] + SUBJECT_LIST, key="q_sub")
+                _qhw = qd.checkbox("손글씨", key="q_hw")
+                _qrep = qe.checkbox("옛 기록 교체", value=True, key="q_rep")
+                if st.button("📌 다시 읽기 예약", type="primary", key="q_add"):
+                    u = _lbl2[_file]
+                    iq.add("rescan", source=_src.strip() or u["original_name"],
+                           subject=None if _qsub == "자동" else _qsub,
+                           storage_path=u["storage_path"], filename=u["original_name"],
+                           handwriting=_qhw, replace=_qrep)
+                    st.success("예약 완료 — 새벽 워커가 처리해요. "
+                               "지금 바로 처리하려면 GitHub Actions에서 수동 실행하세요.")
+                    st.rerun()
+
     # ── 서버에 보관된 원본 다시 가져오기 ───────────────────────
     with st.expander("☁️ 서버에 보관된 원본 다시 가져오기"):
         if not cloud.enabled():
@@ -714,6 +771,27 @@ with tabin:
         accept_multiple_files=True, key="in_files")
     okey_in = api_key("OpenAI Key(읽기·분류용)", "OPENAI_API_KEY", "in_key")
 
+    if ups_in and len(ups_in) >= 1:
+        _tot = sum(len(u.getvalue()) for u in ups_in) / 1e6
+        st.caption(f"올린 파일 {len(ups_in)}개 · {_tot:.1f}MB")
+        if len(ups_in) >= 6 or _tot > 20:
+            st.warning("파일이 많아요. 여기서 한 번에 스캔하면 폰 화면이 꺼지거나 "
+                       "메모리 한도로 앱이 멈출 수 있어요. 아래 '워커에 맡기기'를 권해요.")
+        if cloud.enabled() and st.button(
+                f"📌 {len(ups_in)}개 전부 워커에 맡기기 (스캔 없이 예약)", key="in_queue"):
+            import ingest_queue as iq2
+            bar, n = st.progress(0.0, text="원본 보관 중…"), 0
+            for i, u in enumerate(ups_in):
+                raw = u.getvalue()
+                sp = cloud.archive_upload(subject, "inbox", u.name, raw)
+                if sp:
+                    iq2.add("upload", source=os.path.splitext(u.name)[0], subject=None,
+                            storage_path=sp, filename=u.name, replace=False)
+                    n += 1
+                bar.progress((i + 1) / len(ups_in), text=f"{i + 1}/{len(ups_in)}")
+            st.success(f"{n}개 예약 완료 — 새벽 워커가 스캔·분류해서 넣어요. "
+                       "급하면 GitHub Actions에서 수동 실행하세요.")
+
     if ups_in or _drive_files:
         import pandas as pd
         from concurrent.futures import ThreadPoolExecutor
@@ -749,6 +827,10 @@ with tabin:
                                                  text=f"읽는 중 {fi + 1}/{len(files_in)} · "
                                                       f"{name} {d}/{n}쪽"))
                     out.append({"name": name, "raw": raw, "res": res, "hw": is_img})
+                _keep = sum(len(f["raw"]) for f in out) < 20_000_000
+                if not _keep:                       # 메모리 한도(앱 멈춤) 예방
+                    for f in out:
+                        f["raw"] = b""
                 bar.progress(1.0, text="분류 중…")
                 tag_model = cloud.cfg("OPENAI_TAG_MODEL") or "gpt-4o-mini"
                 def _tag(f):
@@ -832,7 +914,7 @@ with tabin:
                         continue
                     f = out[int(row["#"])]
                     res = f["res"]
-                    if bool(row["손글씨"]) != f["hw"] and okey_in:
+                    if bool(row["손글씨"]) != f["hw"] and okey_in and f["raw"]:
                         res = _scan_one(f["name"], f["raw"], bool(row["손글씨"]), cache)
                     cat, title = row["종류"], str(row["이름"]).strip() or f["name"]
                     pick = row["과목"]
