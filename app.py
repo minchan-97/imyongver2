@@ -11,7 +11,7 @@ app.py — 임용 국어 4레이어 Streamlit 앱 (단일 앱·탭 방식)
 
 데이터는 전부 과목별 pkl로 data/ 아래 저장된다.
 """
-import sys, os, json, time
+import sys, os, json, time, re
 import numpy as np
 import streamlit as st
 
@@ -156,6 +156,51 @@ if cloud.enabled() and st.session_state.get("_synced_subject") != subject:
     st.session_state["_sync_report"] = _rep
 
 st.sidebar.markdown("---")
+st.sidebar.write("**🩺 자기검증**")
+import selfcheck
+_hist = selfcheck.load_history(subject)
+_last = _hist[-1] if _hist else None
+if _last:
+    st.sidebar.caption(f"마지막 {_last['when']} · 경고 {len(_last['alerts'])}건")
+_sc1, _sc2 = st.sidebar.columns(2)
+_do_fix = st.sidebar.checkbox("기준 미달이면 재학습까지", key="sc_fix")
+if _sc1.button("지금 점검", use_container_width=True, key="sc_run"):
+    with st.spinner("자기검증 중…"):
+        _last = selfcheck.run(subject, fix=_do_fix)
+    if _do_fix and _last.get("retrained"):
+        load_engine.clear()
+    st.rerun()
+if _last:
+    with st.sidebar.expander(f"결과 보기 ({len(_last['alerts'])}건)",
+                             expanded=bool(_last["alerts"])):
+        for _a in _last["alerts"]:
+            st.warning(_a)
+        if not _last["alerts"]:
+            st.success("이상 없음")
+        _m, _h, _g = _last["model"], _last["hygiene"], _last["regression"]
+        if _m.get("trained"):
+            st.caption(f"자료 {_m['records']}건 · 벡터화 {_m['coverage']:.0%} · "
+                       f"양자화오차 {_m['qe']:.3f}"
+                       + (f" ({_m['qe_delta']:+.0%})" if _m.get("qe_prev") else "")
+                       + f" · 빈 노드 {_m['dead_nodes']:.0%}")
+        else:
+            st.caption(_m.get("note", "모델 없음"))
+        st.caption(f"근거 실재율 {1 - _g['ungrounded_rate']:.0%} "
+                   f"(코드 {_g['checked_codes']} · 노드 {_g['checked_nodes']})")
+        if _last.get("retrained"):
+            st.caption(f"재학습: {_last['retrained']}")
+        if _h["uncertain_scan"]:
+            st.write("**재스캔 후보 (판독 불안)**")
+            for _x in _h["uncertain_scan"][:10]:
+                st.caption(f"· {_x['source']} — (?) {_x['marks']}개")
+        if _h["duplicate"]:
+            st.write("**중복 쪽**")
+            for _x in _h["duplicate"][:10]:
+                st.caption(f"· {_x['source']} ≡ {_x['same_as']}")
+        if _h["weak_source"]:
+            st.caption(f"출처 부실 {len(_h['weak_source'])}건")
+
+st.sidebar.markdown("---")
 st.sidebar.write("**☁️ 서버 백업**")
 if cloud.enabled():
     _r = st.session_state.get("_sync_report", {})
@@ -288,20 +333,77 @@ with tabin:
     if st.session_state.get("in_summary"):
         st.success("저장 완료 · " + " · ".join(st.session_state.pop("in_summary")))
 
+    # ── 구글 드라이브에서 가져오기 ─────────────────────────────
+    import drive as gdrive
+    _folders = [x for x in re.split(r"[\n,]+", str(cloud.cfg("DRIVE_FOLDERS") or
+                                                  cloud.cfg("DRIVE_FOLDER_URL") or ""))
+                if x.strip()]
+    _gkey, _gsa = cloud.cfg("GOOGLE_API_KEY"), cloud.cfg("GOOGLE_SERVICE_ACCOUNT")
+    with st.expander(f"📁 구글 드라이브에서 가져오기 ({len(_folders)}개 폴더)",
+                     expanded=bool(_folders) and not st.session_state.get("in_files")):
+        if not _folders:
+            st.caption("secrets에 DRIVE_FOLDERS = \"폴더 링크\" 를 넣으면 여기서 바로 가져올 수 있어요 "
+                       "(여러 개면 줄바꿈으로 구분).")
+        else:
+            if not (_gkey or _gsa):
+                st.caption("키 없이 공개 폴더 모드로 읽어요 — 폴더 공유가 "
+                           "'링크가 있는 모든 사용자 - 뷰어'여야 해요. "
+                           "(구글이 임베드 경로를 바꾸면 안 될 수 있어요. "
+                           "무료 GOOGLE_API_KEY를 넣으면 안정적이에요.)")
+            if st.button("🔄 폴더 훑어보기", key="dr_scan"):
+                try:
+                    _all = []
+                    for u in _folders:
+                        fid = gdrive.folder_id(u)
+                        if not fid:
+                            st.warning(f"폴더 링크를 못 알아봤어요: {u[:60]}")
+                            continue
+                        _all += gdrive.list_folder(fid, _gkey, _gsa)
+                    st.session_state["dr_list"] = gdrive.dedupe(_all)
+                except Exception as e:
+                    st.error(f"드라이브 조회 실패: {e}")
+            _lst = st.session_state.get("dr_list")
+            if _lst is not None:
+                dstate = gdrive.DriveState(paths.drive_state_path())
+                _new = [f for f in _lst if dstate.is_new(f)]
+                st.caption(f"폴더 안 파일 {len(_lst)}개 · 새 파일 {len(_new)}개")
+                _sel = st.multiselect("가져올 파일", [f["path"] for f in _new],
+                                      default=[f["path"] for f in _new], key="dr_sel")
+                if _sel and st.button(f"⬇️ {len(_sel)}개 가져오기", type="primary", key="dr_get"):
+                    bar, got = st.progress(0.0, text="내려받는 중…"), []
+                    for i, f in enumerate([x for x in _new if x["path"] in _sel]):
+                        try:
+                            got.append(gdrive.download(f, _gkey, _gsa))
+                            dstate.mark(f)
+                        except Exception as e:
+                            st.warning(str(e))
+                        bar.progress((i + 1) / len(_sel), text=f"{i + 1}/{len(_sel)}")
+                    dstate.save()
+                    st.session_state["in_drive_files"] = got
+                    st.rerun()
+    _drive_files = st.session_state.get("in_drive_files") or []
+    if _drive_files:
+        c_d1, c_d2 = st.columns([3, 1])
+        c_d1.info(f"드라이브에서 가져온 파일 {len(_drive_files)}개가 아래 목록에 포함돼요.")
+        if c_d2.button("비우기", key="dr_clear"):
+            st.session_state.pop("in_drive_files", None)
+            st.session_state.pop("dr_list", None)
+            st.rerun()
+
     ups_in = st.file_uploader(
         "파일 여러 개 (pdf · 사진 · docx · txt)",
         type=["pdf", "docx", "txt", "jpg", "jpeg", "png", "webp", "heic"],
         accept_multiple_files=True, key="in_files")
     okey_in = api_key("OpenAI Key(읽기·분류용)", "OPENAI_API_KEY", "in_key")
 
-    if ups_in:
+    if ups_in or _drive_files:
         import pandas as pd
         from concurrent.futures import ThreadPoolExecutor
         from page_scan import build_pages, scan_pages, ScanCache, file_sha, IMAGE_EXT
         from auto_tag import classify, CATEGORIES
         from concept_dict import ConceptDict
         _cnames = ConceptDict.load(paths.concept_dict_path(subject), subject).names()
-        files_in = [(u.name, u.getvalue()) for u in ups_in]
+        files_in = list(_drive_files) + [(u.name, u.getvalue()) for u in (ups_in or [])]
         sig_in = file_sha("|".join(file_sha(r) for _, r in files_in).encode())[:16]
         skey = f"in_{sig_in}"
 
