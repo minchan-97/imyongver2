@@ -267,3 +267,136 @@ def propagate_tags(subject, fields=FILLABLE, dry_run=False):
             save_records_pkl(recs, path)
     return dict(filled)
 
+
+# ── 규칙으로 못 가르는 문서 → LLM 판정 ───────────────────────
+LLM_SYSTEM = """너는 초등 임용 자료를 분류하는 사서다. 한 문서(여러 쪽)의 본문 일부를 보고
+아래 JSON 하나만 출력한다. 마인드맵·개념도를 옮긴 글처럼 조각난 낱말 나열일 수도 있다.
+{"subject":"국어|영어|수학|사회|과학|미술|음악|체육|실과|도덕|총론|창의적체험활동|통합교과|공통 중 하나",
+ "area":"영역(예: 읽기, 수와 연산). 모르면 \"\"",
+ "doc_type":"교육과정_총론|교육과정_성취기준|지도서_총론|지도서_각론|개인_필기 중 하나 또는 \"\"",
+ "confidence":0.0~1.0,
+ "reason":"판단 근거 한 줄(어떤 낱말을 보고 그렇게 봤는지)"}
+근거가 약하면 confidence를 낮게 준다. 추측으로 확신하지 말 것."""
+
+
+def undetermined_docs(subject_list=None, max_conf=0.6, layers=("L2_corpus", "L1_pattern"),
+                      sample_chars=4000, skip_tagged=True):
+    """규칙으로 과목을 못 가르는(또는 확신 낮은) 문서들. 마인드맵·필기가 주로 여기 걸린다."""
+    subject_list = subject_list or sorted(SUBJECTS - {"공통"})
+    out = []
+    for subj in subject_list:
+        for path, layer in ((paths.l2_path(subj), "L2_corpus"),
+                            (paths.l1_path(subj), "L1_pattern")):
+            if layer not in layers:
+                continue
+            recs = load_records_pkl(path)
+            if not recs:
+                continue
+            by_base = {}
+            for rec in recs:
+                by_base.setdefault(base_source(rec.source), []).append(rec)
+            docs = judge_docs(recs)
+            for b, rs in by_base.items():
+                prop, conf, ev, _ = docs.get(b, (None, 0.0, [], 0))
+                tagged = sum(1 for rec in rs if rec.area and rec.doc_type)
+                if skip_tagged and tagged >= max(1, int(len(rs) * 0.8)):
+                    continue          # 이미 사람이 확인해 태그가 채워진 문서는 다시 안 묻는다
+                if conf < max_conf:
+                    sample, used = [], 0
+                    for rec in rs:
+                        t = rec.text.strip()
+                        if used + len(t) > sample_chars:
+                            break
+                        sample.append(t)
+                        used += len(t)
+                    out.append({"path": path, "layer": layer, "current": subj,
+                                "source": b, "pages": len(rs),
+                                "rec_ids": [rec.rec_id for rec in rs],
+                                "rule_guess": prop, "rule_conf": conf,
+                                "has_area": sum(1 for rec in rs if rec.area),
+                                "sample": "\n".join(sample)})
+    out.sort(key=lambda d: -d["pages"])
+    return out
+
+
+def judge_docs_llm(docs, api_key, model="gpt-4o-mini", workers=6, progress=None):
+    """undetermined_docs() 결과에 LLM 판정을 붙인다. 반환: 같은 행 + proposed/area/doc_type/conf"""
+    import json
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from openai import OpenAI
+    from schema import DOC_TYPES
+    client = OpenAI(api_key=api_key)
+
+    def work(d):
+        resp = client.chat.completions.create(
+            model=model, temperature=0, response_format={"type": "json_object"},
+            messages=[{"role": "system", "content": LLM_SYSTEM},
+                      {"role": "user", "content": f"문서 이름: {d['source']}\n\n본문:\n{d['sample']}"}])
+        j = json.loads(resp.choices[0].message.content)
+        subj = j.get("subject") if j.get("subject") in SUBJECTS else None
+        dt = j.get("doc_type") if j.get("doc_type") in DOC_TYPES else None
+        try:
+            conf = max(0.0, min(1.0, float(j.get("confidence", 0.5))))
+        except Exception:
+            conf = 0.5
+        return {"proposed": subj, "area": str(j.get("area") or "").strip(),
+                "doc_type": dt, "conf": conf,
+                "evidence": ["LLM: " + str(j.get("reason") or "")[:120]]}
+
+    out, done = [], 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(work, d): d for d in docs}
+        for fut in as_completed(futs):
+            d = futs[fut]
+            try:
+                out.append({**d, **fut.result()})
+            except Exception as e:
+                out.append({**d, "proposed": None, "area": "", "doc_type": None,
+                            "conf": 0.0, "evidence": [f"LLM 실패: {e}"]})
+            done += 1
+            if progress:
+                progress(done, len(docs))
+    out.sort(key=lambda x: -x["conf"])
+    return out
+
+
+def apply_doc_decisions(rows):
+    """
+    문서 단위 결정 적용: 과목 이동 + 영역·자료종류 채우기(비어 있는 쪽만).
+    rows: judge_docs_llm() 결과 중 사용자가 확인한 것 (proposed/area/doc_type 수정 가능)
+    """
+    moved = tagged = 0
+    for r in rows:
+        ids = set(r["rec_ids"])
+        recs = load_records_pkl(r["path"])
+        stay, hit = [], []
+        for rec in recs:
+            (hit if rec.rec_id in ids else stay).append(rec)
+        if not hit:
+            continue
+        new_hit = []
+        for rec in hit:
+            d = rec.to_dict()
+            if r.get("area") and not d.get("area"):
+                d["area"] = r["area"]
+                tagged += 1
+            if r.get("doc_type") and not d.get("doc_type"):
+                d["doc_type"] = r["doc_type"]
+            if r.get("proposed") and r["proposed"] != r["current"]:
+                d["subject"] = r["proposed"]
+            new_hit.append(Record(**{k: v for k, v in d.items() if k != "rec_id"}))
+        if r.get("proposed") and r["proposed"] != r["current"]:
+            tgt_path = (paths.l2_path(r["proposed"]) if r["layer"] == "L2_corpus"
+                        else paths.l1_path(r["proposed"]))
+            tgt = load_records_pkl(tgt_path)
+            have = {x.rec_id for x in tgt}
+            for rec in new_hit:
+                if rec.rec_id not in have:
+                    tgt.append(rec)
+                    have.add(rec.rec_id)
+            save_records_pkl(stay, r["path"])
+            save_records_pkl(tgt, tgt_path)
+            moved += len(new_hit)
+        else:
+            save_records_pkl(stay + new_hit, r["path"])
+    return moved, tagged
