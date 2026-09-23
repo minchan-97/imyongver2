@@ -19,6 +19,7 @@ secrets에 폴더 링크만 넣어두면, 앱이 그 폴더(하위 폴더 포함
 가져온 파일은 (파일ID, 수정시각)으로 기록해 두어 다음엔 건너뛴다.
 """
 from __future__ import annotations
+CORE_VERSION = "13.2"
 import os, re, io, json, pickle, time
 
 API = "https://www.googleapis.com/drive/v3/files"
