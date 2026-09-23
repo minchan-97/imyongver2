@@ -53,3 +53,20 @@ def scan_cache_path(): return _p("scan_cache.pkl")   # 페이지 스캔 결과 �
 
 
 def drive_state_path(): return _p("drive_state.pkl")  # 드라이브에서 가져온 파일 기록
+
+
+def discover_subjects(extra_names=None):
+    """
+    자료가 있는 과목 찾기. 로컬 data/ 의 파일명 + (있으면) 서버 파일명에서
+    '{과목}_L1.pkl' / '{과목}_L2.pkl' 꼴을 골라낸다.
+    """
+    from schema import SUBJECTS
+    names = list(extra_names or [])
+    if os.path.isdir(BASE):
+        names += os.listdir(BASE)
+    found = set()
+    for n in names:
+        for s in SUBJECTS:
+            if n in (f"{s}_L1.pkl", f"{s}_L2.pkl"):
+                found.add(s)
+    return sorted(found)
