@@ -14,6 +14,7 @@ daily_digest.py — 매일 아침 '오늘 읽을 자료집'을 과목별로 자�
   {"days": {날짜: digest}, "schedule": {키: {last_read, streak, due}}}
 """
 from __future__ import annotations
+CORE_VERSION = "13.2"
 import os, re, json, time, pickle, random
 from collections import defaultdict, Counter
 
