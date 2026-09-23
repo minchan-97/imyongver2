@@ -319,10 +319,82 @@ emb, som = load_engine(subject, _mtime(paths.emb_path(subject)), _mtime(paths.so
 
 st.title(f"📖 임용 4레이어 — {subject}")
 
-tabin, tab2, tab1, tablab, tab3, tab4, tab5, tabp, tabc = st.tabs(
-    ["📥 한 번에 넣기", "📚 자료·학습 (L2)", "📈 기출 패턴 (L1)", "🧪 경향 랩",
+tabday, tabin, tab2, tab1, tablab, tab3, tab4, tab5, tabp, tabc = st.tabs(
+    ["📖 오늘의 자료집", "📥 한 번에 넣기", "📚 자료·학습 (L2)", "📈 기출 패턴 (L1)",
+     "🧪 경향 랩",
      "🔎 트렌드 (L3)",
      "📝 문제 풀기 (L4)", "🎯 수능형 연습 (L5)", "📜 지문 학습", "🕸️ 개념 지도"])
+
+# ══════════════════════════════════════════════════════════════
+# 탭 — 오늘의 자료집
+# ══════════════════════════════════════════════════════════════
+with tabday:
+    import daily_digest as dd
+    _today = dd.today_str()
+    _store = dd.load_store(subject)
+    _dg = _store["days"].get(_today)
+    st.subheader(f"오늘의 자료집 · {subject}")
+    st.caption("무엇을 읽을지는 약점·복습 주기·출제 예상으로 정해요. "
+               "원문을 출처와 함께 붙이고, 요약도 그 원문만 근거로 만들어요. "
+               "새벽 워커가 미리 만들어 두면 여기서 바로 보여요.")
+
+    dc1, dc2, dc3 = st.columns([2, 2, 1])
+    _n_items = dc1.number_input("항목 수", 3, 12, 5, key="dg_n")
+    _okey_dg = api_key("OpenAI Key(요약용, 선택)", "OPENAI_API_KEY", "dg_key")
+    if dc3.button("🔁 다시 편성" if _dg else "📖 오늘 것 만들기", type="primary", key="dg_make"):
+        try:
+            bar = st.progress(0.0, text="자료집 만드는 중…")
+            _dg, _store = dd.build(subject, int(_n_items), _okey_dg or None,
+                                   cloud.cfg("OPENAI_DIGEST_MODEL") or "gpt-4o-mini",
+                                   force=True,
+                                   progress=lambda i, n: bar.progress(i / max(n, 1),
+                                                                      text=f"요약 {i}/{n}"))
+            st.rerun()
+        except Exception as e:
+            st.error(f"편성 실패: {e}")
+
+    if not _dg:
+        st.info("아직 오늘 자료집이 없어요. 위 버튼을 누르거나, 새벽 워커가 만들어 두면 자동으로 떠요.")
+    else:
+        _done = sum(i["read"] for i in _dg["items"])
+        st.progress(_done / max(len(_dg["items"]), 1),
+                    text=f"{_done}/{len(_dg['items'])} 읽음 · 총 {_dg['chars']:,}자")
+        for _i, it in enumerate(_dg["items"]):
+            with st.expander(("✅ " if it["read"] else "") + f"{it['title']}"
+                             + (f"  ·  {it['why'][0]}" if it["why"] else ""),
+                             expanded=not it["read"] and _i == _done):
+                st.caption(" · ".join(it["why"]))
+                if it["summary"]:
+                    for line in it["summary"]:
+                        st.write("• " + line)
+                elif it.get("summary_error"):
+                    st.caption(f"요약 실패: {it['summary_error']}")
+                for r in it["reads"]:
+                    st.markdown(f"**{r['source']}**"
+                                + (f"  ·  {r['doc_type']}" if r.get("doc_type") else ""))
+                    st.write(r["text"])
+                if it["questions"]:
+                    st.write("**확인 질문**")
+                    for q in it["questions"]:
+                        st.write("- " + q)
+                b1, b2 = st.columns(2)
+                if not it["read"]:
+                    if b1.button("✅ 읽음", key=f"dg_ok_{_i}"):
+                        dd.mark_read(subject, _today, it["key"], True)
+                        st.rerun()
+                else:
+                    if b1.button("↩️ 읽음 취소", key=f"dg_no_{_i}"):
+                        dd.mark_read(subject, _today, it["key"], False)
+                        st.rerun()
+                b2.caption("읽으면 다음 복습일이 1→3→7→14→30일로 밀려요")
+
+    _hist = [d for d in dd.recent(subject, 7) if d["date"] != _today]
+    if _hist:
+        with st.expander(f"🗓️ 지난 자료집 {len(_hist)}일"):
+            for d in reversed(_hist):
+                st.caption(f"{d['date']} · " + ", ".join(i["title"] for i in d["items"])
+                           + f" ({sum(i['read'] for i in d['items'])}/{len(d['items'])} 읽음)")
+
 
 # ══════════════════════════════════════════════════════════════
 # 탭 — 한 번에 넣기 (자동 분류)
