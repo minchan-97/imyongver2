@@ -299,8 +299,24 @@ def _scan_vision(jpeg: bytes, api_key: str, model: str, concept_names,
     raise RuntimeError(f"스캔 실패: {last}")
 
 
+CID_RE = re.compile(r"\(?cid[:\s]?\d{1,6}\)?", re.I)
+HANGUL_RE = re.compile(r"[가-힣]")
+
+
+def looks_broken(text):
+    """CID 글꼴 PDF를 텍스트층으로 읽으면 '(cid:54)' 같은 글자만 나온다 → 못 쓰는 결과."""
+    t = text or ""
+    if len(CID_RE.findall(t)) >= 3:
+        return True
+    return len(t) > 200 and len(HANGUL_RE.findall(t)) / len(t) < 0.15
+
+
 def _plain(text, method):
     text = (text or "").strip()
+    if looks_broken(text):
+        return {"text": "", "codes": [], "area": "", "concepts": [], "skip": True,
+                "method": method,
+                "note": "PDF 글꼴이 깨져 텍스트층을 못 씀 — OpenAI 키를 넣으면 이미지로 읽어요"}
     return {"text": text, "codes": _codes(text), "area": "", "concepts": [],
             "skip": len(text) < 20, "method": method}
 
@@ -347,7 +363,7 @@ def scan_pages(pages, api_key=None, concept_names=None, cache: ScanCache = None,
                                 handwriting)
         if pg["kind"] == "pdf":
             r = _plain(_pdf_text_layer(pg["raw"], pg["index"]), "textlayer")
-            if not r["text"]:
+            if not r["text"] and not r.get("note"):
                 r["note"] = "텍스트층 없음(스캔본) — OpenAI 키가 있으면 읽을 수 있어요"
             return r
         r = _plain("", "none")
