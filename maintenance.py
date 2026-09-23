@@ -15,6 +15,7 @@ SOM 지도도 흐려지고, 해설의 근거로 인용해도 어디가 근거인
 (서버에도 버전 백업이 쌓이므로 사이드바에서 되돌릴 수 있다.)
 """
 from __future__ import annotations
+CORE_VERSION = "13.2"
 import os, re, time, shutil
 from collections import Counter, defaultdict
 
