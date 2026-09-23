@@ -260,3 +260,4 @@ if __name__ == "__main__":
     print(json.dumps({k: v for k, v in r.items() if k != "hygiene"},
                      ensure_ascii=False, indent=2, default=str))
     print("경고:", r["alerts"] or "없음")
+
