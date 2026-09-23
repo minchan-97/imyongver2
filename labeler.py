@@ -13,6 +13,7 @@ labeler.py — 2층: LLM이 붙인 라벨을 쌓아 '로컬 태거'로 증류한
 로컬 태거는 '제안'이다. 자료에 쓰는 값은 사람이 확정한다.
 """
 from __future__ import annotations
+CORE_VERSION = "13.2"
 import os, json, pickle, time
 import numpy as np
 
