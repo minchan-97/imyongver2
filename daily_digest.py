@@ -58,59 +58,117 @@ def today_str(ts=None):
 
 
 # ── 항목 고르기 ──────────────────────────────────────────────
-def _candidates(subject, l2, common, st_, store, trend_targets):
-    """성취기준 코드 단위로 후보를 만들고 점수를 매긴다."""
-    corpus = list(l2) + list(common)
-    by_code = defaultdict(list)
+KIND_BONUS = {"code": 0.6, "concept": 0.4, "node": 0.3, "area": 0.2,
+              "unit": 0.2, "source": 0.0}
+MIN_GROUP = 2          # 이만큼은 모여야 한 항목
+
+
+def _groups(subject, corpus):
+    """
+    묶을 수 있는 방법을 전부 쓴다. 코드가 없는 자료(스캔본·필기)도
+    반드시 어딘가에 묶이도록 마지막에 '출처 묶음'이 받쳐준다.
+    """
+    g = {}
+
+    def put(key, kind, title, r):
+        g.setdefault(key, {"kind": kind, "title": title, "recs": []})["recs"].append(r)
+
     for r in corpus:
         if r.code:
-            by_code[r.code].append(r)
-    # 코드가 없는 자료는 개념 태그로 묶어 보조 후보
-    by_concept = defaultdict(list)
-    for r in corpus:
+            put(f"code:{r.code}", "code", r.code, r)
         for c in (r.concepts or []):
-            by_concept[c].append(r)
+            put(f"concept:{c}", "concept", c, r)
+        if r.area:
+            put(f"area:{r.area}", "area", f"{r.area} 영역", r)
+        if r.unit:
+            put(f"unit:{r.unit}", "unit", r.unit, r)
 
+    # SOM 개념영역(노드)별 묶음 — 학습된 지도가 있을 때
+    try:
+        from som import SOM
+        import os as _os
+        sp = paths.som_path(subject)
+        if _os.path.exists(sp):
+            som = SOM.load(sp)
+            by_id = {r.rec_id: r for r in corpus}
+            for node, ids in (som.node_rec_ids or {}).items():
+                rs = [by_id[i] for i in ids if i in by_id]
+                for r in rs:
+                    put(f"node:{node}", "node", f"개념영역 {node}번", r)
+    except Exception:
+        pass
+
+    # 출처 묶음(항상 가능) — 같은 자료를 4쪽씩 끊어서
+    by_src = {}
+    for r in corpus:
+        base = r.source.rsplit(" p.", 1)[0] if " p." in r.source else r.source
+        by_src.setdefault(base, []).append(r)
+    for base, rs in by_src.items():
+        rs = sorted(rs, key=lambda x: x.source)
+        for k in range(0, len(rs), 4):
+            part = rs[k:k + 4]
+            if len(part) >= MIN_GROUP:
+                key = f"source:{base}#{k // 4 + 1}"
+                g[key] = {"kind": "source", "recs": part,
+                          "title": f"{base} ({k + 1}~{k + len(part)}쪽)"}
+    return {k: v for k, v in g.items() if len(v["recs"]) >= MIN_GROUP}
+
+
+def _candidates(subject, l2, common, st_, store, trend_targets):
+    """묶음마다 점수를 매긴다(약점·복습주기·출제예상·미개척)."""
+    corpus = list(l2) + list(common)
+    groups = _groups(subject, corpus)
     now = time.time()
     sched = store["schedule"]
     out = []
-
-    def add(key, kind, recs):
-        if not recs:
-            return
+    for key, gi in groups.items():
         s = sched.get(key, {})
-        last, streak = s.get("last_read"), s.get("streak", 0)
-        due = s.get("due", 0)
+        last, due = s.get("last_read"), s.get("due", 0)
         never = last is None
-        overdue_days = (now - due) / DAY if due else (0 if never else 0)
-        score, why = 0.0, []
+        score, why = KIND_BONUS.get(gi["kind"], 0.0), []
         if never:
             score += 1.0
             why.append("아직 안 읽음")
         elif now >= due:
-            score += min(2.0, 0.6 + overdue_days * 0.1)
+            score += min(2.0, 0.6 + (now - due) / DAY * 0.1)
             why.append(f"복습 주기 도래(마지막 {int((now - last) / DAY)}일 전)")
         else:
             score -= 1.5                                   # 아직 이른 항목
-        if kind == "code":
-            c, t = st_.code_stats.get(key, [0, 0])
+        code = gi["title"] if gi["kind"] == "code" else None
+        if code:
+            c, t = st_.code_stats.get(code, [0, 0])
             if t:
-                rate = c / t
-                score += (1.0 - rate) * 2.0
-                why.append(f"정답률 {rate:.0%} ({c}/{t})")
-        if key in trend_targets:
-            score += trend_targets[key]
-            why.append(f"다음 시험 출제 예상 {trend_targets[key]:.0%}")
-        out.append({"key": key, "kind": kind, "score": score, "why": why,
-                    "recs": recs, "never": never})
-
-    for code, recs in by_code.items():
-        add(code, "code", recs)
-    for con, recs in by_concept.items():
-        if len(recs) >= 2:
-            add(f"개념:{con}", "concept", recs)
+                score += (1.0 - c / t) * 2.0
+                why.append(f"정답률 {c / t:.0%} ({c}/{t})")
+            if code in trend_targets:
+                score += trend_targets[code]
+                why.append(f"다음 시험 출제 예상 {trend_targets[code]:.0%}")
+        out.append({"key": key, "kind": gi["kind"], "title": gi["title"],
+                    "score": score, "why": why, "recs": gi["recs"], "never": never})
     out.sort(key=lambda d: -d["score"])
     return out
+
+
+def _select(cands, n_items, st_):
+    """
+    항목을 고르면서 읽을 원문까지 정한다.
+    이미 다른 항목에 들어간 원문은 빼고 고르므로, 큰 묶음이 작은 묶음을
+    통째로 잡아먹어 항목 수가 줄어드는 일이 없다.
+    """
+    used, picked = set(), []
+    for c in cands:
+        left = [r for r in c["recs"] if r.rec_id not in used]
+        if len(left) < 1:
+            continue
+        reads = _pick_reads(left, st_)
+        if not reads:
+            continue
+        c = dict(c, reads=reads)
+        picked.append(c)
+        used |= {r["rec_id"] for r in reads}
+        if len(picked) >= n_items:
+            break
+    return picked
 
 
 def _trend_targets(subject):
@@ -180,11 +238,10 @@ def build(subject, n_items=5, api_key=None, model="gpt-4o-mini", date=None,
     cands = _candidates(subject, l2, common, st_, store, _trend_targets(subject))
 
     items = []
-    for c in cands[:n_items]:
-        title = c["key"] if c["kind"] == "code" else c["key"].split(":", 1)[1]
-        items.append({"key": c["key"], "kind": c["kind"], "title": title,
+    for c in _select(cands, n_items, st_):
+        items.append({"key": c["key"], "kind": c["kind"], "title": c["title"],
                       "why": c["why"] or ["기본 순환"], "score": round(c["score"], 2),
-                      "reads": _pick_reads(c["recs"], st_),
+                      "reads": c["reads"],
                       "summary": [], "questions": [], "read": False})
     if api_key:
         for i, it in enumerate(items):
@@ -197,6 +254,9 @@ def build(subject, n_items=5, api_key=None, model="gpt-4o-mini", date=None,
         if progress:
             progress(len(items), len(items))
 
+    if not items:
+        raise ValueError(f"묶을 자료가 부족해요 (자료 {len(l2) + len(common)}건). "
+                         "같은 출처로 2쪽 이상 있으면 편성돼요.")
     digest = {"date": d, "subject": subject, "made_at": time.time(),
               "items": items, "pool": len(cands),
               "chars": sum(len(r["text"]) for it in items for r in it["reads"])}
