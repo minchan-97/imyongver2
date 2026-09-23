@@ -53,6 +53,7 @@ def _norm(t):
 def check_hygiene(l2, l1, common):
     recs = list(l2) + list(l1) + list(common)
     weak_source, dup, uncertain, short, no_code, no_year = [], [], [], [], [], []
+    broken = []
     seen = {}
     for r in recs:
         src = (r.source or "").strip()
@@ -65,6 +66,12 @@ def check_hygiene(l2, l1, common):
                             "same_as": seen[key], "text": r.text[:60]})
             else:
                 seen[key] = src
+        try:
+            import maintenance as _mt
+            if _mt.is_garbage(r.text):
+                broken.append({"rec_id": r.rec_id, "source": src, "text": r.text[:60]})
+        except Exception:
+            pass
         n_unc = len(UNCERTAIN.findall(r.text))
         if n_unc >= TH["uncertain_page"]:
             uncertain.append({"rec_id": r.rec_id, "source": src, "marks": n_unc,
@@ -76,6 +83,7 @@ def check_hygiene(l2, l1, common):
         if r.layer == "L1_pattern" and not r.year:
             no_year.append({"rec_id": r.rec_id, "source": src, "text": r.text[:60]})
     return {"total": len(recs), "weak_source": weak_source, "duplicate": dup,
+            "broken_text": broken,
             "uncertain_scan": uncertain, "too_short": short,
             "achievement_no_code": no_code, "exam_no_year": no_year,
             "rescan_candidates": [x["source"] for x in uncertain][:50]}
@@ -122,10 +130,17 @@ def check_model(subject, l2, prev=None):
     return out
 
 
-def retrain(subject, l2, dim=32, grid=10, iters=4000):
+def auto_epochs(texts):
+    """자료가 크면 에폭을 줄인다 (임베딩 1에폭이 수십 초 걸리므로)."""
+    n = sum(len(t) for t in texts)
+    return 30 if n < 300_000 else (15 if n < 1_000_000 else 8)
+
+
+def retrain(subject, l2, dim=32, grid=10, iters=4000, epochs=None):
     """임베딩 + SOM 재학습 (앱의 '학습 시작'과 같은 절차)."""
     texts = [r.text for r in l2]
-    emb = train_embedding(texts, dim=dim, min_count=1, epochs=30)
+    epochs = epochs or auto_epochs(texts)
+    emb = train_embedding(texts, dim=dim, min_count=1, epochs=epochs)
     emb.save(paths.emb_path(subject))
     X, kept = [], []
     for r in l2:
@@ -138,7 +153,8 @@ def retrain(subject, l2, dim=32, grid=10, iters=4000):
     som.train(np.array(X), iters=iters)
     som.assign(np.array(X), kept)
     som.save(paths.som_path(subject))
-    return {"vocab": len(emb.word2idx), "vectorized": len(kept), "records": len(l2)}
+    return {"vocab": len(emb.word2idx), "vectorized": len(kept), "records": len(l2),
+            "epochs": epochs}
 
 
 # ── 3) 회귀 테스트 (근거 실재성) ──────────────────────────────
@@ -223,6 +239,7 @@ def run(subject, fix=False, dim=32, grid=10):
     h = rep["hygiene"]
     rep["alerts"] = []
     for label, key in [("출처 부실", "weak_source"), ("중복 쪽", "duplicate"),
+                       ("깨진 글자(재스캔 필요)", "broken_text"),
                        ("판독 불안(재스캔 후보)", "uncertain_scan"),
                        ("코드 없는 성취기준", "achievement_no_code"),
                        ("연도 없는 기출", "exam_no_year")]:
@@ -260,4 +277,3 @@ if __name__ == "__main__":
     print(json.dumps({k: v for k, v in r.items() if k != "hygiene"},
                      ensure_ascii=False, indent=2, default=str))
     print("경고:", r["alerts"] or "없음")
-
