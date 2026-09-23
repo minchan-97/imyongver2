@@ -12,6 +12,7 @@ passage_cluster.py — 기출 지문(제시문) 전용 관리 + 유사 지문 �
   sklearn 있으면 사용, 없으면 numpy k-means 폴백(의존성 최소화).
 """
 from __future__ import annotations
+CORE_VERSION = "13.2"
 import os, pickle, hashlib
 import numpy as np
 
