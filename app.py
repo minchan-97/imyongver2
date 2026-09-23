@@ -689,6 +689,23 @@ with tabin:
                 f"{j['source']}→" + (f"{j['result'].get('added', 0)}쪽"
                                      if j["status"] == "done" else "실패")
                 for j in _done))
+        st.markdown("**전체 다시 읽기**")
+        ra, rb, rc = st.columns(3)
+        _all_sub = ra.selectbox("대상", ["이 과목만", "전 과목"], key="q_allsub")
+        _all_hw = rb.checkbox("손글씨로", key="q_allhw")
+        _all_wipe = rc.checkbox("기존 기록 비우기", key="q_allwipe")
+        if cloud.enabled() and st.button("🔄 보관된 원본 전부 다시 읽기 예약", key="q_all"):
+            n = iq.enqueue_all_uploads(None if _all_sub == "전 과목" else subject,
+                                       replace=True, handwriting=_all_hw,
+                                       wipe=_all_wipe, log=lambda *a: None)
+            st.success(f"{n}건 예약 — 워커가 한 회차에 20건씩 처리해요 "
+                       "(Actions에서 queue_limit을 올리면 한 번에 더 많이).")
+            st.rerun()
+        if _all_wipe:
+            st.warning("'기존 기록 비우기'는 그 과목의 L1·L2를 통째로 지운 뒤 다시 채워요. "
+                       "백업은 남지만, 앱에서 직접 입력한 기록도 함께 사라져요.")
+        st.markdown("---")
+
         if not cloud.enabled():
             st.caption("Supabase 연결이 있어야 원본을 워커가 내려받을 수 있어요.")
         else:
