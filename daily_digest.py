@@ -59,7 +59,7 @@ def today_str(ts=None):
 
 # ── 항목 고르기 ──────────────────────────────────────────────
 KIND_BONUS = {"code": 0.6, "concept": 0.4, "node": 0.3, "area": 0.2,
-              "unit": 0.2, "source": 0.0}
+              "unit": 0.2, "exam": 0.3, "source": 0.0}
 MIN_GROUP = 2          # 이만큼은 모여야 한 항목
 
 
@@ -97,6 +97,12 @@ def _groups(subject, corpus):
                     put(f"node:{node}", "node", f"개념영역 {node}번", r)
     except Exception:
         pass
+
+    # 기출은 시험 단위로도 묶는다 (기출만 있는 과목도 자료집이 나오도록)
+    for r in corpus:
+        if r.layer == "L1_pattern":
+            base = r.source.rsplit(" p.", 1)[0] if " p." in r.source else r.source
+            put(f"exam:{base}", "exam", f"기출 · {base}", r)
 
     # 출처 묶음(항상 가능) — 같은 자료를 4쪽씩 끊어서
     by_src = {}
@@ -194,7 +200,8 @@ def _pick_reads(recs, st_, limit=3, chars=1200):
     out = []
     for r in rs[:limit]:
         t = r.text.strip()
-        out.append({"source": r.source, "doc_type": r.doc_type, "rec_id": r.rec_id,
+        label = r.doc_type or ("기출" if r.layer == "L1_pattern" else None)
+        out.append({"source": r.source, "doc_type": label, "rec_id": r.rec_id,
                     "text": t[:chars] + ("…" if len(t) > chars else "")})
     return out
 
@@ -231,11 +238,12 @@ def build(subject, n_items=5, api_key=None, model="gpt-4o-mini", date=None,
         return store["days"][d], store
 
     l2 = load_records_pkl(paths.l2_path(subject))
+    l1 = load_records_pkl(paths.l1_path(subject))
     common = load_records_pkl(paths.common_chongron_path())
-    if not l2 and not common:
-        raise ValueError("자료가 없어요. 먼저 자료를 넣어주세요.")
+    if not (l2 or l1 or common):
+        raise ValueError(f"'{subject}' 자료가 아직 없어요. 자료나 기출을 먼저 넣어주세요.")
     st_ = StudyState.load(paths.study_path(subject), subject)
-    cands = _candidates(subject, l2, common, st_, store, _trend_targets(subject))
+    cands = _candidates(subject, l2 + l1, common, st_, store, _trend_targets(subject))
 
     items = []
     for c in _select(cands, n_items, st_):
@@ -255,8 +263,8 @@ def build(subject, n_items=5, api_key=None, model="gpt-4o-mini", date=None,
             progress(len(items), len(items))
 
     if not items:
-        raise ValueError(f"묶을 자료가 부족해요 (자료 {len(l2) + len(common)}건). "
-                         "같은 출처로 2쪽 이상 있으면 편성돼요.")
+        raise ValueError(f"묶을 자료가 부족해요 — 자료 {len(l2)}건 · 기출 {len(l1)}건 · "
+                         f"공통 {len(common)}건. 같은 출처로 2쪽 이상 있으면 편성돼요.")
     digest = {"date": d, "subject": subject, "made_at": time.time(),
               "items": items, "pool": len(cands),
               "chars": sum(len(r["text"]) for it in items for r in it["reads"])}
