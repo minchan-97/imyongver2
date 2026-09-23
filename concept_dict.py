@@ -6,6 +6,7 @@ concept_dict.py — 과목별 '개념 태그 사전'.
 그래서 한 번 만든 개념은 사전에서 골라 재사용한다.
 """
 from __future__ import annotations
+CORE_VERSION = "13.2"
 import os, pickle
 
 try:
