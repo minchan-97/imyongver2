@@ -12,6 +12,7 @@ file_ingest.py — 업로드 파일(pdf/docx/txt) → 문장 단위 텍스트 �
     사용자가 손보게 한다(특히 성취기준은 한 줄=한 항목이 이상적).
 """
 from __future__ import annotations
+CORE_VERSION = "13.2"
 import io, re
 
 
