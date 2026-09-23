@@ -359,6 +359,9 @@ with tabday:
         _done = sum(i["read"] for i in _dg["items"])
         st.progress(_done / max(len(_dg["items"]), 1),
                     text=f"{_done}/{len(_dg['items'])} 읽음 · 총 {_dg['chars']:,}자")
+        if len(_dg["items"]) < _n_items:
+            st.caption(f"묶을 수 있는 자료가 {_dg['pool']}개라 {len(_dg['items'])}항목만 나왔어요. "
+                       "자료를 더 넣으면 늘어나요.")
         for _i, it in enumerate(_dg["items"]):
             with st.expander(("✅ " if it["read"] else "") + f"{it['title']}"
                              + (f"  ·  {it['why'][0]}" if it["why"] else ""),
