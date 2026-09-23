@@ -10,7 +10,7 @@ worker.py — 서버에서 혼자 도는 점검·재학습.
 
 GitHub Actions·크론·내 PC 어디서 돌려도 같다. 앱은 사이드바에서 그 리포트를 본다.
 """
-import os, sys, json, argparse
+import os, re, sys, json, argparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "core"))
@@ -18,7 +18,24 @@ sys.path.insert(0, os.path.join(ROOT, "core"))
 import paths, cloud, selfcheck
 
 
-def run_one(subject, fix):
+def run_one(subject, fix, maintain_steps=None, label_limit=300):
+    # 0) 자료 정비 (깨진 글자·중복·긴 쪽 분할·영역 라벨) — 변경 전 백업이 남는다
+    if maintain_steps:
+        try:
+            import maintenance as mt
+            mrep = mt.run(subject, steps=maintain_steps, dry_run=False,
+                          api_key=os.environ.get("OPENAI_API_KEY"),
+                          model=os.environ.get("OPENAI_TAG_MODEL", "gpt-4o-mini"),
+                          label_limit=label_limit)
+            sp = mrep.get("split", {})
+            print(f"정비: 깨진글자 {mrep.get('garbage', {}).get('n', 0)} · "
+                  f"중복 {mrep.get('dedupe', 0)} · "
+                  f"분할 {sp.get('before', 0)}→{sp.get('after', 0)} · "
+                  f"영역라벨 {mrep.get('label', 0)} · "
+                  f"태그정리 {len(mrep.get('fix_tags', []))}")
+        except Exception as e:
+            print("정비 건너뜀:", e)
+
     r = selfcheck.run(subject, fix=fix)
     # 새 기출이 들어왔으면 대기 중인 경향 예측을 자동 채점 (LLM 호출 없음)
     try:
@@ -52,8 +69,21 @@ def run_one(subject, fix):
 ap = argparse.ArgumentParser()
 ap.add_argument("--subject", default=os.environ.get("SUBJECT", "all"),
                 help="과목명, 쉼표로 여러 개, 또는 'all'(자료가 있는 과목 전부)")
-ap.add_argument("--fix", action="store_true")
+ap.add_argument("--fix", action="store_true", help="기준 미달이면 재학습")
+ap.add_argument("--maintain", default=os.environ.get("MAINTAIN", ""),
+                help="정비 단계(쉼표) 또는 'on'(기본 단계) / 비우면 정비 안 함")
+ap.add_argument("--label-limit", type=int,
+                default=int(os.environ.get("LABEL_LIMIT", 300)))
 a = ap.parse_args()
+
+_m = (a.maintain or "").strip().lower()
+if _m in ("", "0", "off", "false"):
+    MAINT = None
+else:
+    import maintenance as _mt
+    MAINT = (_mt.APP_STEPS if _m in ("1", "on", "true", "yes")
+             else tuple(s.strip() for s in a.maintain.split(",") if s.strip()))
+print("정비 단계:", ", ".join(MAINT) if MAINT else "안 함")
 
 if not cloud.enabled():
     print("⚠️  SUPABASE_URL/KEY 없음 — 로컬 파일만 사용합니다.")
@@ -67,6 +97,40 @@ else:
     subjects = [s.strip() for s in a.subject.split(",") if s.strip()]
 print("대상 과목:", ", ".join(subjects))
 
+# ── 0) 스캔 대기열 처리 (앱에서 '다시 읽기'로 걸어둔 것 + 드라이브 새 파일) ──
+OPENAI = os.environ.get("OPENAI_API_KEY")
+if OPENAI:
+    import ingest_queue as iq
+    folders = [x for x in re.split(r"[\n,]+", os.environ.get("DRIVE_FOLDERS", "")) if x.strip()]
+    if folders:
+        try:
+            n = iq.enqueue_drive_new(folders, os.environ.get("GOOGLE_API_KEY"),
+                                     os.environ.get("GOOGLE_SERVICE_ACCOUNT"))
+            print(f"드라이브 새 파일 {n}개 대기열 추가")
+        except Exception as e:
+            print("드라이브 수집 실패:", e)
+    _rescan = (os.environ.get("RESCAN_ALL") or "").strip()
+    if _rescan and _rescan.lower() not in ("0", "off", "false", ""):
+        _sub = None if _rescan.lower() in ("1", "on", "true", "all", "전체") else _rescan
+        _wipe = (os.environ.get("WIPE_FIRST", "") or "").lower() in ("1", "on", "true")
+        try:
+            n = iq.enqueue_all_uploads(_sub, replace=True, wipe=_wipe)
+            print(f"전체 다시 읽기: {n}건 대기열 추가"
+                  + (" (기존 기록 비우기 포함)" if _wipe else ""))
+        except Exception as e:
+            print("전체 다시 읽기 실패:", e)
+
+    _pend = iq.pending()
+    if _pend:
+        print(f"\n════ 스캔 대기열 {len(_pend)}건 (이번 회차 최대 "
+              f"{os.environ.get('QUEUE_LIMIT', 20)}건) ════")
+        _qlimit = int(os.environ.get("QUEUE_LIMIT", 20))
+        for r in iq.run_queue(OPENAI, os.environ.get("OPENAI_SCAN_MODEL"),
+                              limit=_qlimit):
+            print("  ", r)
+else:
+    print("OPENAI_API_KEY 없음 — 스캔 대기열은 건너뜁니다")
+
 summary = []
 for subject in subjects:
     print(f"\n════ {subject} ════")
@@ -74,7 +138,7 @@ for subject in subjects:
         rep = cloud.sync(paths.all_paths(subject))
         print(f"동기화: 내려받음 {len(rep['down'])} · 올림 {len(rep['up'])}")
     try:
-        r = run_one(subject, a.fix)
+        r = run_one(subject, a.fix, MAINT, a.label_limit)
         summary.append((subject, len(r["alerts"]), bool(r.get("retrained"))))
     except Exception as e:
         print(f"⚠️  {subject} 실패: {e}")
@@ -85,5 +149,4 @@ for s, n, rt in summary:
     print(f"{s}: " + ("실패" if n < 0 else f"경고 {n}건") + (" · 재학습함" if rt else ""))
 if cloud.ERRORS:
     print("서버 오류:", cloud.ERRORS)
-
 
