@@ -201,6 +201,13 @@ def run(subject, fix=False, dim=32, grid=10):
     rep = {"subject": subject, "epoch": time.time(),
            "when": time.strftime("%Y-%m-%d %H:%M", time.localtime())}
     rep["hygiene"] = check_hygiene(l2, l1, common)
+    try:
+        import resubject
+        rows = resubject.audit([subject])
+        rep["subject_mix"] = {"suspect": len(rows), "moves": resubject.summary(rows),
+                              "examples": rows[:10]}
+    except Exception as e:
+        rep["subject_mix"] = {"error": str(e)}
     rep["model"] = check_model(subject, l2, prev)
     rep["regression"] = check_regression(subject, l2, common)
     rep["retrained"] = None
@@ -219,6 +226,10 @@ def run(subject, fix=False, dim=32, grid=10):
                        ("연도 없는 기출", "exam_no_year")]:
         if h[key]:
             rep["alerts"].append(f"{label} {len(h[key])}건")
+    _sm = rep.get("subject_mix", {})
+    if _sm.get("suspect"):
+        _mv = ", ".join(f"{m['from']}→{m['to']} {m['n']}건" for m in _sm["moves"][:3])
+        rep["alerts"].append(f"과목이 다르게 판정된 자료 {_sm['suspect']}건 ({_mv})")
     rep["alerts"] += rep["model"].get("reasons", [])
     if rep["regression"]["alert"]:
         rep["alerts"].append(f"근거 없는 문항 {rep['regression']['ungrounded_rate']:.0%}")
