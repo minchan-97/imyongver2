@@ -319,8 +319,9 @@ emb, som = load_engine(subject, _mtime(paths.emb_path(subject)), _mtime(paths.so
 
 st.title(f"📖 임용 4레이어 — {subject}")
 
-tabin, tab2, tab1, tab3, tab4, tab5, tabp, tabc = st.tabs(
-    ["📥 한 번에 넣기", "📚 자료·학습 (L2)", "📈 기출 패턴 (L1)", "🔎 트렌드 (L3)",
+tabin, tab2, tab1, tablab, tab3, tab4, tab5, tabp, tabc = st.tabs(
+    ["📥 한 번에 넣기", "📚 자료·학습 (L2)", "📈 기출 패턴 (L1)", "🧪 경향 랩",
+     "🔎 트렌드 (L3)",
      "📝 문제 풀기 (L4)", "🎯 수능형 연습 (L5)", "📜 지문 학습", "🕸️ 개념 지도"])
 
 # ══════════════════════════════════════════════════════════════
@@ -886,6 +887,163 @@ with tab1:
                 st.markdown(text)
                 with st.expander("근거가 된 계산 수치(속기사가 옮긴 원본)"):
                     st.json(facts)
+
+# ══════════════════════════════════════════════════════════════
+# 탭 — 경향 랩 (예측·채점 원장 + LLM 라벨 → 로컬 태거)
+# ══════════════════════════════════════════════════════════════
+with tablab:
+    import trend_lab as tl
+    import labeler as lb
+    st.subheader("경향 랩")
+    st.caption("LLM은 해석만, 숫자는 여기서 계산해요. 예측은 기계가 채점할 수 있는 형태로만 "
+               "받아 적중률을 쌓아요. 성적 좋은 규칙이 다음 예측에 다시 들어가요.")
+    okey_lab = api_key("OpenAI Key", "OPENAI_API_KEY", "lab_key")
+    lab_model = cloud.cfg("OPENAI_TREND_MODEL") or "gpt-4o-mini"
+    _lab = tl.load_lab(subject)
+    _years = sorted({r.year for r in l1 if r.year})
+
+    lt1, lt2, lt3 = st.tabs(["📊 통계", "🔮 예측·백테스트", "🏷️ 라벨 → 로컬 태거"])
+
+    with lt1:
+        if not _years:
+            st.info("연도가 있는 기출이 없어요. 먼저 기출을 넣어주세요.")
+        else:
+            _st = tl.stats(l1)
+            st.caption(f"기출 {_st['pages']}쪽 · 연도 {_years[0]}~{_years[-1]}")
+            st.bar_chart({"쪽수": {str(y): _st["per_year"][y]["pages"] for y in _years}})
+            cA, cB = st.columns(2)
+            cA.write("**최근 3년 영역**")
+            cA.write(_st["areas"]["recent"] or "—")
+            cB.write("**최근 3년 핵심어**")
+            cB.write(dict(list(_st["keywords"]["recent"].items())[:10]) or "—")
+            st.caption(f"새로 등장: {', '.join(_st['codes']['new'][:8]) or '—'} · "
+                       f"사라짐: {', '.join(_st['codes']['gone'][:8]) or '—'}")
+
+    with lt2:
+        _sc = tl.summary(_lab["predictions"])
+        if _sc.get("scored"):
+            m1, m2, m3 = st.columns(3)
+            m1.metric("채점된 예측", _sc["scored"])
+            m2.metric("적중률", f"{_sc['hit_rate']:.0%}")
+            m3.metric("Brier", f"{_sc['brier']:.3f}",
+                      f"기준선 {_sc['brier_baseline']:.3f}",
+                      delta_color="inverse")
+            st.caption("Brier는 낮을수록 좋아요. 기준선(항상 평균 확률로 찍기)보다 "
+                       "낮아야 예측에 의미가 있어요.")
+        else:
+            st.caption("아직 채점된 예측이 없어요. 백테스트를 돌리면 바로 성적이 나와요.")
+
+        if not okey_lab:
+            st.info("예측에는 OpenAI 키가 필요해요.")
+        elif len(_years) < 3:
+            st.info("백테스트는 연도가 3개 이상일 때 의미가 있어요.")
+        else:
+            bt1, bt2 = st.columns(2)
+            if bt1.button("🧪 백테스트 실행", type="primary", key="lab_bt"):
+                bar = st.progress(0.0, text="예측 중…")
+                try:
+                    res, _lab = tl.backtest(
+                        subject, l1, okey_lab, lab_model,
+                        progress=lambda i, n, y: bar.progress(i / max(n, 1),
+                                                              text=f"{y}년 예측 중… ({i}/{n})"))
+                    st.session_state["lab_bt"] = res
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"백테스트 실패: {e}")
+            _ty = bt2.number_input("예측할 연도", 2000, 2035,
+                                   (max(_years) + 1) if _years else 2026, key="lab_ty")
+            if bt2.button("🔮 다음 시험 예측", key="lab_pred"):
+                try:
+                    preds, meta = tl.predict(subject, l1, int(_ty), okey_lab, lab_model,
+                                             _lab, cutoff=int(_ty))
+                    tl.score(subject, l1, preds, _lab)   # 그 해 기출이 이미 있으면 바로 채점
+                    _lab["predictions"] += preds
+                    tl.save_lab(subject, _lab)
+                    st.success(f"{len(preds)}개 예측 저장 "
+                               + (f"(형식 안 맞아 버린 것 {meta['dropped']}개)"
+                                  if meta["dropped"] else ""))
+                except Exception as e:
+                    st.error(f"예측 실패: {e}")
+
+        if st.session_state.get("lab_bt"):
+            st.write("**백테스트 결과 (연도별)**")
+            st.dataframe([{"연도": r.get("year"), "예측수": r.get("n"),
+                           "적중률": (f"{r['hit_rate']:.0%}" if r.get("hit_rate") is not None else "—"),
+                           "Brier": (f"{r['brier']:.3f}" if r.get("brier") is not None else "—"),
+                           "기준선": (f"{r['brier_baseline']:.3f}" if r.get("brier_baseline") is not None else "—"),
+                           "오류": r.get("error", "")}
+                          for r in st.session_state["lab_bt"]],
+                         use_container_width=True, hide_index=True)
+
+        _rules = tl.top_rules(_lab, n=10, min_n=1)
+        if _rules:
+            st.write("**규칙 성적 (좋은 순)**")
+            st.dataframe([{"규칙": r["rule"][:70], "표본": r["n"],
+                           "적중률": f"{r['hit_rate']:.0%}", "Brier": f"{r['brier']:.3f}"}
+                          for r in _rules], use_container_width=True, hide_index=True)
+            st.caption("표본이 쌓일수록 신뢰도가 올라가요. 상위 규칙은 다음 예측에 자동으로 들어가요.")
+
+        _pending = [p for p in _lab["predictions"] if not p["scored"]]
+        if _pending:
+            st.write(f"**채점 대기 {len(_pending)}건** (그 해 기출이 들어오면 자동 채점)")
+            st.dataframe([{"대상": p["target_year"], "범위": p["scope"],
+                           "예측": p["target"], "확률": f"{p['prob']:.0%}",
+                           "규칙": p["rule"][:40]} for p in _pending[-20:]],
+                         use_container_width=True, hide_index=True)
+            if st.button("지금 채점 시도", key="lab_score"):
+                n = tl.score(subject, l1, _lab["predictions"], _lab)
+                tl.save_lab(subject, _lab)
+                st.success(f"{n}건 채점" if n else "아직 채점할 수 있는 게 없어요")
+                st.rerun()
+
+    with lt3:
+        st.caption("LLM이 쪽마다 영역·발문유형·난도를 붙이고, 그 라벨로 로컬 분류기를 학습해요. "
+                   "학습 뒤에는 키 없이도 태깅이 돼요.")
+        _store = lb.load_labels(subject)
+        _pool = list(l1) + list(l2)
+        _todo = [r for r in _pool if r.rec_id not in _store]
+        st.caption(f"라벨 {len(_store)}건 · 아직 없는 자료 {len(_todo)}건")
+        if okey_lab and _todo:
+            n_lab = st.number_input("한 번에 라벨 붙일 개수", 10, 500, min(100, len(_todo)),
+                                    step=10, key="lab_n")
+            if st.button("🏷️ 라벨 붙이기", type="primary", key="lab_go"):
+                bar = st.progress(0.0, text="라벨 중…")
+                _store, done = lb.label_records(
+                    subject, _todo, okey_lab, lab_model, limit=int(n_lab),
+                    progress=lambda d, n: bar.progress(d / max(n, 1), text=f"{d}/{n}"))
+                st.success(f"{done}건 라벨 완료")
+                st.rerun()
+        elif not okey_lab:
+            st.info("라벨링에는 OpenAI 키가 필요해요.")
+
+        if _store:
+            _ok = [v for v in _store.values() if "error" not in v]
+            st.dataframe([{"영역": v.get("area") or "—", "유형": v.get("qtype"),
+                           "난도": v.get("level"), "출처": v.get("source", "")[:30]}
+                          for v in _ok[-15:]], use_container_width=True, hide_index=True)
+            if st.button("🧠 로컬 태거 학습", key="lab_train"):
+                try:
+                    rep = lb.train_tagger(subject, _pool)
+                    st.session_state["tagger_rep"] = rep
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"학습 실패: {e}")
+        _rep = st.session_state.get("tagger_rep")
+        if _rep:
+            st.write("**홀드아웃 성적** (기준선 = 가장 흔한 라벨로 전부 찍기)")
+            st.dataframe([{"항목": k,
+                           "정확도": (f"{v['accuracy']:.0%}" if "accuracy" in v else "—"),
+                           "기준선": (f"{v['baseline']:.0%}" if "baseline" in v else "—"),
+                           "학습/검증": (f"{v['train']}/{v['test']}" if "train" in v else ""),
+                           "비고": v.get("skip", "")} for k, v in _rep.items()],
+                         use_container_width=True, hide_index=True)
+            st.caption("기준선보다 높아야 배운 게 있는 거예요. 낮으면 라벨을 더 모으세요.")
+        if lb.load_tagger(subject):
+            _q = st.text_input("로컬 태거 시험 (문장 붙여넣기)", key="lab_try")
+            if _q:
+                _r = lb.tag(subject, _q)
+                st.write(_r or "벡터화 실패 — 임베딩에 없는 단어뿐이에요")
+
 
 # ══════════════════════════════════════════════════════════════
 # 탭 L3 — 트렌드 검색
