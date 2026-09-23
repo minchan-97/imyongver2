@@ -161,16 +161,81 @@ def run_queue(api_key, model=None, limit=20, log=print):
     for job in todo:
         log(f"  · {job['source']} ({job['kind']})")
         try:
-            r = process(job, api_key, model, log=log)
+            r = _wipe(job, log) if job["kind"] == "wipe" else \
+                process(job, api_key, model, log=log)
             set_status(q, job["id"], "done", r)
             out.append({"source": job["source"], **r})
-            log(f"    → {r['added']}쪽 저장 ({r['path']})")
+            log(f"    → {r['added']}쪽 저장 ({r['path']})" if "added" in r
+                else f"    → {r.get('wiped', 0)}쪽 비움")
         except Exception as e:
             set_status(q, job["id"], "error", {"error": str(e)})
             out.append({"source": job["source"], "error": str(e)})
             log(f"    → 실패: {e}")
         q = load()
     return out
+
+
+# ── 보관된 원본 전부 다시 읽기 ───────────────────────────────
+def existing_sources(subject=None):
+    """지금 저장돼 있는 출처(문서) 이름들 — 파일명과 맞춰보려고."""
+    from schema import load_records_pkl, SUBJECTS
+    subs = [subject] if subject else sorted(SUBJECTS - {"공통"})
+    out = set()
+    for s in subs:
+        for p in (paths.l2_path(s), paths.l1_path(s)):
+            for r in load_records_pkl(p):
+                b = r.source.rsplit(" (", 1)[0]
+                out.add(b.rsplit(" p.", 1)[0] if " p." in b else b)
+    return out
+
+
+def enqueue_all_uploads(subject=None, replace=True, handwriting=False, wipe=False,
+                        log=print):
+    """
+    서버에 보관된 원본을 전부 다시 읽도록 대기열에 넣는다.
+    출처 이름은 파일명(확장자 제외)을 쓰되, 같은 이름의 기존 출처가 있으면 그대로 맞춘다.
+    wipe=True면 먼저 그 과목의 기존 기록을 비우는 작업을 앞에 넣는다(백업 후).
+    """
+    import cloud
+    ups = cloud.list_uploads(subject)
+    if not ups:
+        return 0
+    q = load()
+    already = {j["storage_path"] for j in q["jobs"]
+               if j["status"] == "queued" and j.get("storage_path")}
+    srcs = existing_sources(subject)
+    n = 0
+    if wipe:
+        add("wipe", source=f"{subject or '전 과목'} 기존 기록 비우기", subject=subject)
+        n += 1
+    for u in ups:
+        if u["storage_path"] in already:
+            continue
+        stem = os.path.splitext(u["original_name"])[0]
+        src = stem if stem in srcs else next(
+            (s for s in srcs if stem[:12] and stem[:12] in s), stem)
+        add("rescan", source=src, subject=None, storage_path=u["storage_path"],
+            filename=u["original_name"], handwriting=handwriting, replace=replace)
+        log(f"  + {u['original_name']} → 출처 '{src}'")
+        n += 1
+    return n
+
+
+def _wipe(job, log=print):
+    """그 과목(또는 전 과목)의 L1/L2를 비운다. 백업을 남기고 비운다."""
+    from schema import SUBJECTS, save_records_pkl
+    import maintenance as mt
+    subs = [job["subject"]] if job.get("subject") else sorted(SUBJECTS - {"공통"})
+    wiped = 0
+    for s in subs:
+        for p in (paths.l2_path(s), paths.l1_path(s)):
+            if os.path.exists(p):
+                mt._backup(p)
+                from schema import load_records_pkl
+                wiped += len(load_records_pkl(p))
+                os.remove(p)
+                log(f"    비움: {os.path.basename(p)}")
+    return {"wiped": wiped}
 
 
 # ── 드라이브 새 파일 자동 수집 ───────────────────────────────
