@@ -9,6 +9,7 @@ auto_tag.py — 올린 파일을 읽고 '무슨 자료인지' 자동 분류.
 과목별 기출로 자동 분배된다.
 """
 from __future__ import annotations
+CORE_VERSION = "13.2"
 import json, re
 
 CATEGORIES = ["기출", "교육과정_성취기준", "지도서_각론", "지도서_총론",
