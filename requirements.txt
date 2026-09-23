@@ -8,3 +8,5 @@ supabase>=2.4
 pypdfium2>=4.20
 pillow>=10.0
 pillow-heif>=0.16
+requests>=2.31
+google-auth>=2.30
