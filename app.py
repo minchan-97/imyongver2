@@ -422,8 +422,12 @@ with tabin:
         _by_src = rs2.checkbox("출처 단위", value=True, key="rs_bysrc")
         _scope_all = rs3.checkbox("전 과목", value=True, key="rs_all")
         if st.button("🔍 다시 판정", key="rs_run"):
-            st.session_state["rs_rows"] = rsj.audit(
-                None if _scope_all else [subject], min_conf=_conf, by_source=_by_src)
+            try:
+                st.session_state["rs_rows"] = rsj.audit(
+                    None if _scope_all else [subject], min_conf=_conf, by_source=_by_src)
+            except TypeError:
+                st.error("core/resubject.py가 이전 버전이에요. app.py와 core/ 파일을 "
+                         "같은 버전으로 함께 올려주세요.")
         _rows = st.session_state.get("rs_rows")
         if _rows is not None:
             if not _rows:
@@ -463,6 +467,10 @@ with tabin:
                     st.rerun()
 
         st.markdown("---")
+        if not hasattr(rsj, "tag_gaps"):      # core/resubject.py가 옛 버전일 때
+            st.error("core/resubject.py가 이전 버전이에요. app.py와 core/ 파일을 "
+                     "같은 버전으로 함께 올려주세요.")
+            st.stop()
         _gaps = rsj.tag_gaps(subject)
         st.caption("**태그 채우기** — 같은 출처의 다른 쪽에는 있는데 이 쪽에는 없는 "
                    "영역·자료종류·학년군·단원을 다수결로 채워요. "
