@@ -13,6 +13,7 @@ som.py — 고정 임베딩 위에서 도는 SOM.
 CPU only, numpy only, 결정론적.
 """
 from __future__ import annotations
+CORE_VERSION = "13.2"
 import numpy as np
 import pickle
 from collections import defaultdict
