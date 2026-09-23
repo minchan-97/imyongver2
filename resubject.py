@@ -10,6 +10,13 @@ resubject.py — 이미 저장된 자료의 '과목'이 맞는지 다시 판정�
   2) 교과 고유 어휘            — '음운', '분수의 나눗셈', '용해도' 등
   3) (선택) LLM                — 위 둘로 못 가르는 것만
 
+판정 단위는 기본이 '출처(문서)'다. 한 지도서 PDF의 40쪽 중 코드가 붙은 건 3쪽뿐이어도,
+그 문서 전체의 근거를 합쳐서 판정하면 나머지 37쪽도 같이 제자리를 찾는다.
+(쪽 단위로만 보면 근거 없는 쪽은 영원히 미분류로 남아 자료가 '자라지' 않는다.)
+
+같은 이유로 propagate_tags()는 같은 출처 안에서 영역·자료종류·학년군·단원을
+다수결로 채운다. 없는 값을 지어내지 않고, 이미 있는 값은 건드리지 않는다.
+
 이 모듈은 '제안'만 만든다. 실제 이동은 사람이 확인한 것만 apply_moves()로 수행한다.
 """
 from __future__ import annotations
@@ -51,40 +58,74 @@ LEX = {
 LEXSET = {s: set(v.split()) for s, v in LEX.items()}
 
 
-def judge(text, code=None):
-    """한 기록의 과목 판정. 반환: (과목, 확신도 0~1, 근거)"""
-    scores = Counter()
-    ev = []
+def base_source(src: str) -> str:
+    """'국어 지도서 p.12' → '국어 지도서' (같은 문서 묶기)."""
+    return src.rsplit(" p.", 1)[0] if " p." in src else src
+
+
+def _scores(text, code=None):
+    """과목별 점수와 근거. judge()와 문서 단위 판정이 함께 쓴다."""
+    sc, ev = Counter(), []
     codes = [code] if code else []
     codes += ["[%s%s%s-%s]" % m for m in CODE_RE.findall(text or "")]
+    seen = set()
     for c in codes:
         m = CODE_RE.match(c or "")
-        if not m:
+        if not m or c in seen:
             continue
+        seen.add(c)
         subj = CODE_SUBJECT.get(m.group(2)[0])
         if subj:
-            scores[subj] += 3
+            sc[subj] += 3
             ev.append(f"코드 {c}")
     t = text or ""
     for subj, words in LEXSET.items():
         hit = [w for w in words if len(w) >= 2 and w in t]
         if hit:
-            scores[subj] += min(3, len(hit)) * 0.7
+            sc[subj] += min(3, len(hit)) * 0.7
             ev.append(f"{subj} 어휘 {'/'.join(hit[:3])}")
-    if not scores:
+    return sc, ev
+
+
+def _verdict(sc, ev):
+    if not sc:
         return None, 0.0, []
-    best, top = scores.most_common(1)[0]
-    total = sum(scores.values())
-    # 근거의 '양'도 반영: 코드 1개(3점)나 고유어휘 3개(2.1점)는 충분,
+    best, top = sc.most_common(1)[0]
+    total = sum(sc.values())
+    # 근거의 '양'도 반영: 코드 1개(3점)나 고유어휘 3개(2.1점)면 충분,
     # 어휘 1개(0.7점)만으로는 확신하지 않는다.
     strength = min(1.0, top / 2.1)
     return best, round((top / total) * strength, 2), ev[:4]
 
 
-def audit(subject_list=None, min_conf=0.6, layers=("L2_corpus", "L1_pattern")):
+def judge(text, code=None):
+    """한 기록의 과목 판정. 반환: (과목, 확신도 0~1, 근거)"""
+    return _verdict(*_scores(text, code))
+
+
+def judge_docs(records):
+    """출처(문서)별로 근거를 합쳐 판정. 반환: {출처: (과목, 확신도, 근거, 쪽수)}"""
+    agg = {}
+    for r in records:
+        b = base_source(r.source)
+        sc, ev = _scores(r.text, r.code)
+        cur = agg.setdefault(b, [Counter(), [], 0])
+        cur[0].update(sc)
+        cur[1] += ev
+        cur[2] += 1
+    out = {}
+    for b, (sc, ev, n) in agg.items():
+        subj, conf, e = _verdict(sc, ev)
+        out[b] = (subj, conf, e, n)
+    return out
+
+
+def audit(subject_list=None, min_conf=0.6, by_source=True,
+          layers=("L2_corpus", "L1_pattern")):
     """
-    저장된 기록들을 훑어 '지금 과목과 다르게 판정되는' 것만 모은다.
-    반환: [{rec_id, path, current, proposed, conf, evidence, source, text}]
+    저장된 기록 중 '지금 과목과 다르게 판정되는' 것을 모은다.
+    by_source=True(기본): 문서 단위로 판정하고, 그 문서의 모든 쪽을 함께 옮긴다.
+    반환 행: {path, layer, current, proposed, conf, evidence, source, pages, rec_ids, text}
     """
     subject_list = subject_list or sorted(SUBJECTS - {"공통"})
     out = []
@@ -93,39 +134,55 @@ def audit(subject_list=None, min_conf=0.6, layers=("L2_corpus", "L1_pattern")):
                             (paths.l1_path(subj), "L1_pattern")):
             if layer not in layers:
                 continue
-            for r in load_records_pkl(path):
-                prop, conf, ev = judge(r.text, r.code)
-                if prop and prop != subj and conf >= min_conf:
-                    out.append({"rec_id": r.rec_id, "path": path, "layer": layer,
-                                "current": subj, "proposed": prop, "conf": conf,
-                                "evidence": ev, "source": r.source,
-                                "text": r.text[:100]})
-    out.sort(key=lambda d: -d["conf"])
+            recs = load_records_pkl(path)
+            if not recs:
+                continue
+            if by_source:
+                docs = judge_docs(recs)
+                by_base = {}
+                for r in recs:
+                    by_base.setdefault(base_source(r.source), []).append(r)
+                for b, (prop, conf, ev, n) in docs.items():
+                    if prop and prop != subj and conf >= min_conf:
+                        rs = by_base[b]
+                        out.append({"path": path, "layer": layer, "current": subj,
+                                    "proposed": prop, "conf": conf, "evidence": ev,
+                                    "source": b, "pages": len(rs),
+                                    "rec_ids": [r.rec_id for r in rs],
+                                    "text": rs[0].text[:100]})
+            else:
+                for r in recs:
+                    prop, conf, ev = judge(r.text, r.code)
+                    if prop and prop != subj and conf >= min_conf:
+                        out.append({"path": path, "layer": layer, "current": subj,
+                                    "proposed": prop, "conf": conf, "evidence": ev,
+                                    "source": r.source, "pages": 1,
+                                    "rec_ids": [r.rec_id], "text": r.text[:100]})
+    out.sort(key=lambda d: (-d["conf"], -d["pages"]))
     return out
 
 
 def summary(rows):
-    """'국어 → 수학 12건' 식 요약."""
-    c = Counter((r["current"], r["proposed"]) for r in rows)
-    return [{"from": a, "to": b, "n": n} for (a, b), n in c.most_common()]
+    """'국어 → 수학 3개 문서 / 41쪽' 식 요약."""
+    c = Counter()
+    for r in rows:
+        c[(r["current"], r["proposed"])] += r["pages"]
+    docs = Counter((r["current"], r["proposed"]) for r in rows)
+    return [{"from": a, "to": b, "docs": docs[(a, b)], "pages": n}
+            for (a, b), n in c.most_common()]
 
 
 def apply_moves(rows):
-    """
-    확인된 것만 실제로 옮긴다. 같은 layer의 대상 과목 pkl로 이동.
-    (rec_id는 출처+본문으로 만들어지므로 과목이 바뀌어도 그대로 → 중복 안 생김)
-    """
-    by_src = defaultdict(list)
+    """확인된 것만 실제로 옮긴다 (같은 layer의 대상 과목 pkl로)."""
+    by_src = defaultdict(set)
     for r in rows:
-        by_src[(r["path"], r["layer"], r["proposed"])].append(r["rec_id"])
+        by_src[(r["path"], r["layer"], r["proposed"])].update(r["rec_ids"])
 
-    moved, touched = 0, {}
-    for (src_path, layer, target_subj), ids in by_src.items():
+    moved = 0
+    for (src_path, layer, target_subj), idset in by_src.items():
         recs = load_records_pkl(src_path)
-        keep, move = [], []
-        idset = set(ids)
-        for r in recs:
-            (move if r.rec_id in idset else keep).append(r)
+        keep = [r for r in recs if r.rec_id not in idset]
+        move = [r for r in recs if r.rec_id in idset]
         if not move:
             continue
         tgt_path = (paths.l2_path(target_subj) if layer == "L2_corpus"
@@ -139,8 +196,73 @@ def apply_moves(rows):
             if nr.rec_id not in have:
                 tgt.append(nr)
                 have.add(nr.rec_id)
-        touched.setdefault(src_path, None)
         save_records_pkl(keep, src_path)
         save_records_pkl(tgt, tgt_path)
         moved += len(move)
     return moved
+
+
+# ── 같은 출처끼리 태그 채우기 ─────────────────────────────────
+FILLABLE = ("area", "doc_type", "grade_band", "unit")
+
+
+def tag_gaps(subject):
+    """이 과목에서 '같은 출처의 다른 쪽에는 있는데 이 쪽에는 없는' 태그 통계."""
+    stat = {}
+    for path, _ in ((paths.l2_path(subject), 1), (paths.l1_path(subject), 2)):
+        recs = load_records_pkl(path)
+        for field in FILLABLE:
+            fill, _ = _plan_fill(recs, field)
+            if fill:
+                stat[field] = stat.get(field, 0) + len(fill)
+    return stat
+
+
+def _plan_fill(recs, field):
+    """출처별 다수결 값 → 그 값이 비어 있는 쪽 목록."""
+    votes = defaultdict(Counter)
+    for r in recs:
+        v = getattr(r, field, None)
+        if v:
+            votes[base_source(r.source)][v] += 1
+    fill, chosen = [], {}
+    for b, c in votes.items():
+        top, n = c.most_common(1)[0]
+        if n >= 1 and (len(c) == 1 or n >= sum(c.values()) * 0.6):   # 애매하면 안 채움
+            chosen[b] = top
+    for r in recs:
+        b = base_source(r.source)
+        if not getattr(r, field, None) and b in chosen:
+            fill.append((r.rec_id, chosen[b]))
+    return fill, chosen
+
+
+def propagate_tags(subject, fields=FILLABLE, dry_run=False):
+    """
+    같은 출처 안에서 비어 있는 태그를 다수결 값으로 채운다.
+    (없는 값을 만들지 않고, 이미 있는 값은 건드리지 않는다. 코드는 쪽마다 달라 제외.)
+    """
+    filled = Counter()
+    for path in (paths.l2_path(subject), paths.l1_path(subject)):
+        recs = load_records_pkl(path)
+        if not recs:
+            continue
+        changed = False
+        for field in fields:
+            plan, _ = _plan_fill(recs, field)
+            if not plan:
+                continue
+            m = dict(plan)
+            new = []
+            for r in recs:
+                if r.rec_id in m:
+                    d = r.to_dict()
+                    d[field] = m[r.rec_id]
+                    r = Record(**{k: v for k, v in d.items() if k != "rec_id"})
+                    filled[field] += 1
+                    changed = True
+                new.append(r)
+            recs = new
+        if changed and not dry_run:
+            save_records_pkl(recs, path)
+    return dict(filled)
