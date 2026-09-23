@@ -46,7 +46,8 @@ def all_paths(subject):
             exam_weak_path(subject), passage_path(subject),
             common_chongron_path(), scan_cache_path(), drive_state_path(),
             _p(f"trendlab_{subject}.pkl"), _p(f"labels_{subject}.pkl"),
-            _p(f"tagger_{subject}.pkl"), _p(f"health_{subject}.pkl")]
+            _p(f"tagger_{subject}.pkl"), _p(f"health_{subject}.pkl"),
+            _p(f"digest_{subject}.pkl")]
 
 
 def scan_cache_path(): return _p("scan_cache.pkl")   # 페이지 스캔 결과 캐시(전 과목 공용)
