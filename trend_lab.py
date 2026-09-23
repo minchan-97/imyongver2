@@ -14,6 +14,7 @@ trend_lab.py — 기출 경향 '예측 → 채점 → 규칙 누적' 원장.
 저장: data/trendlab_{과목}.pkl (서버 백업) — predictions / rules / runs
 """
 from __future__ import annotations
+CORE_VERSION = "13.2"
 import os, re, json, time, pickle, hashlib
 from collections import Counter, defaultdict
 
