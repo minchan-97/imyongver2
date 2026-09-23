@@ -205,6 +205,26 @@ def sync(paths_list) -> dict:
     return report
 
 
+def list_local_names() -> list[str]:
+    """서버에 올라가 있는 pkl들의 원래 파일명 (예: 국어_L2.pkl). 과목 자동 발견용."""
+    c = client()
+    if not c:
+        return []
+    try:
+        out, start = [], 0
+        while True:
+            res = c.table("artifacts").select("local_name").range(start, start + 999).execute()
+            got = res.data or []
+            out += [r["local_name"] for r in got if r.get("local_name")]
+            if len(got) < 1000:
+                break
+            start += 1000
+        return out
+    except Exception as e:
+        _err("파일 목록", e)
+        return []
+
+
 # ── 버전 백업 조회 / 복원 ─────────────────────────────────────
 def list_history(local_name: str) -> list[str]:
     c = client()
