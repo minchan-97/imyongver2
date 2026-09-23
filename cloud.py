@@ -225,6 +225,34 @@ def list_local_names() -> list[str]:
         return []
 
 
+def list_uploads(subject=None, limit=500):
+    """서버(uploads 버킷)에 보관된 원본 파일 목록. 다시 가져오기용."""
+    c = client()
+    if not c:
+        return []
+    try:
+        q = c.table("uploads").select("*")
+        if subject:
+            q = q.eq("subject", subject)
+        res = q.order("created_epoch", desc=True).limit(limit).execute()
+        return res.data or []
+    except Exception as e:
+        _err("원본 목록", e)
+        return []
+
+
+def download_upload(storage_path: str) -> bytes | None:
+    """보관된 원본 파일 내려받기."""
+    c = client()
+    if not c:
+        return None
+    try:
+        return c.storage.from_(BUCKET_UP).download(storage_path)
+    except Exception as e:
+        _err(f"원본 내려받기 {storage_path}", e)
+        return None
+
+
 # ── 버전 백업 조회 / 복원 ─────────────────────────────────────
 def list_history(local_name: str) -> list[str]:
     c = client()
@@ -331,3 +359,4 @@ def archive_upload(subject: str, kind: str, filename: str, raw: bytes) -> bool:
     except Exception as e:
         _err(f"원본보관 {filename}", e)
         return False
+
