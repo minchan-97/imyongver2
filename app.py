@@ -413,34 +413,35 @@ with tabin:
 
     # ── 과목 재분류 (사후 자기검증) ────────────────────────────
     import resubject as rsj
-    with st.expander("🧭 과목 재분류 — 잘못 들어간 자료 찾아 옮기기"):
-        st.caption("넣을 때 과목 칸 기본값이 '지금 보고 있는 과목'이라, 자동 분류가 과목을 "
-                   "못 집으면 전부 그 과목으로 들어가요. 성취기준 코드의 교과 글자와 "
-                   "교과 고유 어휘로 다시 판정해서, 다르게 나온 것만 보여줘요.")
-        rs1, rs2 = st.columns([2, 1])
-        _conf = rs1.slider("최소 확신도", 0.5, 0.95, 0.6, 0.05, key="rs_conf")
-        _scope_all = rs2.checkbox("전 과목 검사", value=True, key="rs_all")
+    with st.expander("🧭 과목 재분류 · 태그 채우기 — 잘못 들어간 자료 정리"):
+        st.caption("판정 단위는 **출처(문서)**예요. 한 지도서에서 코드가 붙은 쪽이 3쪽뿐이어도, "
+                   "문서 전체의 근거를 합쳐 판정하고 나머지 쪽도 같이 옮겨요. "
+                   "쪽 단위로만 보면 근거 없는 쪽은 계속 미분류로 남아요.")
+        rs1, rs2, rs3 = st.columns([2, 1, 1])
+        _conf = rs1.slider("최소 확신도", 0.4, 0.95, 0.6, 0.05, key="rs_conf")
+        _by_src = rs2.checkbox("출처 단위", value=True, key="rs_bysrc")
+        _scope_all = rs3.checkbox("전 과목", value=True, key="rs_all")
         if st.button("🔍 다시 판정", key="rs_run"):
             st.session_state["rs_rows"] = rsj.audit(
-                None if _scope_all else [subject], min_conf=_conf)
+                None if _scope_all else [subject], min_conf=_conf, by_source=_by_src)
         _rows = st.session_state.get("rs_rows")
         if _rows is not None:
             if not _rows:
                 st.success("과목이 다르게 판정된 자료가 없어요.")
             else:
-                st.warning(f"{len(_rows)}건이 다른 과목으로 판정됐어요.")
-                st.dataframe([{"이동": f"{m['from']} → {m['to']}", "건수": m["n"]}
-                              for m in rsj.summary(_rows)],
+                st.warning(f"{len(_rows)}개 {'문서' if _by_src else '쪽'}이 다른 과목으로 판정됐어요.")
+                st.dataframe([{"이동": f"{m['from']} → {m['to']}", "문서": m["docs"],
+                               "쪽": m["pages"]} for m in rsj.summary(_rows)],
                              use_container_width=True, hide_index=True)
                 import pandas as pd
                 _df = pd.DataFrame([{
                     "#": i, "옮기기": True, "지금": r["current"], "제안": r["proposed"],
-                    "확신": int(r["conf"] * 100), "출처": r["source"],
+                    "확신": int(r["conf"] * 100), "쪽": r["pages"], "출처": r["source"],
                     "근거": ", ".join(r["evidence"]), "본문": r["text"]}
                     for i, r in enumerate(_rows)])
                 _ed = st.data_editor(
                     _df, hide_index=True, use_container_width=True,
-                    disabled=["#", "지금", "확신", "출처", "근거", "본문"],
+                    disabled=["#", "지금", "확신", "쪽", "출처", "근거", "본문"],
                     column_config={"#": None,
                                    "제안": st.column_config.SelectboxColumn(
                                        options=SUBJECT_LIST, required=True),
@@ -458,8 +459,25 @@ with tabin:
                     n = rsj.apply_moves(picks)
                     st.session_state.pop("rs_rows", None)
                     load_engine.clear()
-                    st.success(f"{n}건 이동 완료 — 옮긴 과목에서 다시 학습(임베딩·SOM)을 권해요")
+                    st.success(f"{n}쪽 이동 완료 — 옮긴 과목에서 다시 학습(임베딩·SOM)을 권해요")
                     st.rerun()
+
+        st.markdown("---")
+        _gaps = rsj.tag_gaps(subject)
+        st.caption("**태그 채우기** — 같은 출처의 다른 쪽에는 있는데 이 쪽에는 없는 "
+                   "영역·자료종류·학년군·단원을 다수결로 채워요. "
+                   "없는 값을 만들지 않고, 이미 있는 값은 안 건드려요. "
+                   "(성취기준 코드는 쪽마다 달라서 제외)")
+        if _gaps:
+            st.write({k: f"{v}쪽" for k, v in _gaps.items()})
+            if st.button(f"🏷️ {subject} 태그 채우기", key="rs_fill"):
+                done = rsj.propagate_tags(subject)
+                load_engine.clear()
+                st.success("채움: " + (", ".join(f"{k} {v}쪽" for k, v in done.items())
+                                      or "없음"))
+                st.rerun()
+        else:
+            st.caption(f"{subject}에는 채울 게 없어요.")
 
     # ── 구글 드라이브에서 가져오기 ─────────────────────────────
     import drive as gdrive
