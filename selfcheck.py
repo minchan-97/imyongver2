@@ -13,6 +13,7 @@ selfcheck.py — 자기검증. 앱 버튼으로도, 나중에 워커/크론으�
 추이(직전 회차 대비)가 있어야 '나빠졌다'를 말할 수 있어서 이력을 남긴다.
 """
 from __future__ import annotations
+CORE_VERSION = "13.2"
 import os, re, sys, time, pickle, hashlib
 from collections import Counter
 
