@@ -355,6 +355,8 @@ with tabday:
 
     if not _dg:
         st.info("아직 오늘 자료집이 없어요. 위 버튼을 누르거나, 새벽 워커가 만들어 두면 자동으로 떠요.")
+        st.caption(f"현재 {subject} 보유: 자료 {len(l2)}건 · 기출 {len(l1)}건 "
+                   f"(기출만 있어도 편성돼요)")
     else:
         _done = sum(i["read"] for i in _dg["items"])
         st.progress(_done / max(len(_dg["items"]), 1),
@@ -408,6 +410,56 @@ with tabin:
                "파일당 한 줄로 확인 → 저장. 기출은 쪽마다 과목을 판정해 과목별 기출로 나눠 들어가요.")
     if st.session_state.get("in_summary"):
         st.success("저장 완료 · " + " · ".join(st.session_state.pop("in_summary")))
+
+    # ── 과목 재분류 (사후 자기검증) ────────────────────────────
+    import resubject as rsj
+    with st.expander("🧭 과목 재분류 — 잘못 들어간 자료 찾아 옮기기"):
+        st.caption("넣을 때 과목 칸 기본값이 '지금 보고 있는 과목'이라, 자동 분류가 과목을 "
+                   "못 집으면 전부 그 과목으로 들어가요. 성취기준 코드의 교과 글자와 "
+                   "교과 고유 어휘로 다시 판정해서, 다르게 나온 것만 보여줘요.")
+        rs1, rs2 = st.columns([2, 1])
+        _conf = rs1.slider("최소 확신도", 0.5, 0.95, 0.6, 0.05, key="rs_conf")
+        _scope_all = rs2.checkbox("전 과목 검사", value=True, key="rs_all")
+        if st.button("🔍 다시 판정", key="rs_run"):
+            st.session_state["rs_rows"] = rsj.audit(
+                None if _scope_all else [subject], min_conf=_conf)
+        _rows = st.session_state.get("rs_rows")
+        if _rows is not None:
+            if not _rows:
+                st.success("과목이 다르게 판정된 자료가 없어요.")
+            else:
+                st.warning(f"{len(_rows)}건이 다른 과목으로 판정됐어요.")
+                st.dataframe([{"이동": f"{m['from']} → {m['to']}", "건수": m["n"]}
+                              for m in rsj.summary(_rows)],
+                             use_container_width=True, hide_index=True)
+                import pandas as pd
+                _df = pd.DataFrame([{
+                    "#": i, "옮기기": True, "지금": r["current"], "제안": r["proposed"],
+                    "확신": int(r["conf"] * 100), "출처": r["source"],
+                    "근거": ", ".join(r["evidence"]), "본문": r["text"]}
+                    for i, r in enumerate(_rows)])
+                _ed = st.data_editor(
+                    _df, hide_index=True, use_container_width=True,
+                    disabled=["#", "지금", "확신", "출처", "근거", "본문"],
+                    column_config={"#": None,
+                                   "제안": st.column_config.SelectboxColumn(
+                                       options=SUBJECT_LIST, required=True),
+                                   "확신": st.column_config.ProgressColumn(
+                                       min_value=0, max_value=100, format="%d%%"),
+                                   "본문": st.column_config.TextColumn(width="large")},
+                    key="rs_editor")
+                if st.button("✅ 체크한 것 옮기기", type="primary", key="rs_apply"):
+                    picks = []
+                    for _, row in _ed.iterrows():
+                        if row["옮기기"]:
+                            r = dict(_rows[int(row["#"])])
+                            r["proposed"] = row["제안"]
+                            picks.append(r)
+                    n = rsj.apply_moves(picks)
+                    st.session_state.pop("rs_rows", None)
+                    load_engine.clear()
+                    st.success(f"{n}건 이동 완료 — 옮긴 과목에서 다시 학습(임베딩·SOM)을 권해요")
+                    st.rerun()
 
     # ── 구글 드라이브에서 가져오기 ─────────────────────────────
     import drive as gdrive
@@ -535,16 +587,25 @@ with tabin:
             for i, f in enumerate(out):
                 t = f["tag"]
                 stem = os.path.splitext(f["name"])[0]
+                # 분류기가 과목을 못 집으면 규칙 판정으로 한 번 더 시도.
+                # (예전엔 바로 '지금 과목'으로 떨어져서 전부 국어로 쌓였음)
+                _auto_subj = t["subject"]
+                if not _auto_subj:
+                    _txt = " ".join((r.get("text") or "")[:400] for r in f["res"][:6])
+                    _g, _gc, _ = rsj.judge(_txt)
+                    _auto_subj = _g if (_g and _gc >= 0.6) else None
                 rows.append({
                     "#": i, "넣기": not t.get("failed"), "파일": f["name"],
                     "종류": t["category"],
                     "과목": ("쪽별 자동" if t["category"] == "기출" and t["page_subjects"]
-                             else (t["subject"] or subject)),
+                             else (_auto_subj or subject)),
                     "이름": t["title"] or stem,
                     "연도": t["year"], "급": t["level"] or "",
                     "학년군": t["grade_band"], "영역": t["area"], "단원": t["unit"],
                     "손글씨": f["hw"], "확신": int(round(t["confidence"] * 100)),
-                    "쪽": len(f["res"]), "근거": t["reason"],
+                    "쪽": len(f["res"]),
+                    "근거": t["reason"] + ("" if (t["subject"] or _auto_subj)
+                                           else "  ⚠️ 과목 불명 — 현재 과목으로 둠"),
                 })
             _failed = [f["name"] for f in out if f["tag"].get("failed")]
             if _failed:
