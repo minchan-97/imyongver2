@@ -15,7 +15,7 @@ daily_digest.py — 매일 아침 '오늘 읽을 자료집'을 과목별로 자�
 """
 from __future__ import annotations
 import os, re, json, time, pickle, random
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 import paths
 from schema import load_records_pkl
@@ -117,6 +117,21 @@ def _groups(subject, corpus):
                 key = f"source:{base}#{k // 4 + 1}"
                 g[key] = {"kind": "source", "recs": part,
                           "title": f"{base} ({k + 1}~{k + len(part)}쪽)"}
+    # 개념영역(노드) 제목에 대표 낱말을 붙인다 ('개념영역 12번' → '개념영역 12 · 쓰기/과정')
+    from korean_tokenizer import tokenize
+    stop = set("국어 학생 교사 지도 내용 활동 수업 학습 방법 경우 위해 대해 이다 하는 것이 "
+               "자료 단원 차시 개정 교육 교육과정 평가 성취 기준 NUM URL".split())
+    for key, gi in g.items():
+        if gi["kind"] != "node":
+            continue
+        c = Counter()
+        for r in gi["recs"][:40]:
+            for t in set(tokenize(r.text)):
+                if len(t) >= 2 and t not in stop:
+                    c[t] += 1
+        kw = [w for w, _ in c.most_common(3)]
+        if kw:
+            gi["title"] = f"{gi['title'].replace('번', '')} · {'/'.join(kw)}"
     return {k: v for k, v in g.items() if len(v["recs"]) >= MIN_GROUP}
 
 
