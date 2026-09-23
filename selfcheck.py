@@ -203,9 +203,11 @@ def run(subject, fix=False, dim=32, grid=10):
     rep["hygiene"] = check_hygiene(l2, l1, common)
     try:
         import resubject
-        rows = resubject.audit([subject])
-        rep["subject_mix"] = {"suspect": len(rows), "moves": resubject.summary(rows),
-                              "examples": rows[:10]}
+        rows = resubject.audit([subject], by_source=True)
+        rep["subject_mix"] = {"suspect": sum(r["pages"] for r in rows),
+                              "docs": len(rows), "moves": resubject.summary(rows),
+                              "examples": rows[:10],
+                              "tag_gaps": resubject.tag_gaps(subject)}
     except Exception as e:
         rep["subject_mix"] = {"error": str(e)}
     rep["model"] = check_model(subject, l2, prev)
@@ -228,8 +230,11 @@ def run(subject, fix=False, dim=32, grid=10):
             rep["alerts"].append(f"{label} {len(h[key])}건")
     _sm = rep.get("subject_mix", {})
     if _sm.get("suspect"):
-        _mv = ", ".join(f"{m['from']}→{m['to']} {m['n']}건" for m in _sm["moves"][:3])
-        rep["alerts"].append(f"과목이 다르게 판정된 자료 {_sm['suspect']}건 ({_mv})")
+        _mv = ", ".join(f"{m['from']}→{m['to']} {m['pages']}쪽" for m in _sm["moves"][:3])
+        rep["alerts"].append(f"과목이 다르게 판정된 자료 {_sm['suspect']}쪽 ({_mv})")
+    if _sm.get("tag_gaps"):
+        rep["alerts"].append("같은 출처에서 채울 수 있는 태그: "
+                             + ", ".join(f"{k} {v}쪽" for k, v in _sm["tag_gaps"].items()))
     rep["alerts"] += rep["model"].get("reasons", [])
     if rep["regression"]["alert"]:
         rep["alerts"].append(f"근거 없는 문항 {rep['regression']['ungrounded_rate']:.0%}")
