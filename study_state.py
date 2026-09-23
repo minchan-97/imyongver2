@@ -12,6 +12,7 @@ study_state.py — '나와 함께 크는' 학습 상태 관리.
   - 검토 페널티는 되돌릴 수 있어야 한다(좋은 자료가 잘못 묻히지 않게).
 """
 from __future__ import annotations
+CORE_VERSION = "13.2"
 import os, pickle, time
 from collections import defaultdict
 
