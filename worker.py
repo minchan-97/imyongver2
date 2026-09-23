@@ -32,6 +32,18 @@ def run_one(subject, fix):
         print(f"경향 예측 채점: {n}건 · 누적 {tl.summary(lab['predictions'])}")
     except Exception as e:
         print("경향 채점 건너뜀:", e)
+    # 오늘의 자료집 편성 (OPENAI_API_KEY가 있으면 요약·확인 질문까지)
+    try:
+        import daily_digest as dd
+        dg, _ = dd.build(subject, n_items=int(os.environ.get("DIGEST_ITEMS", 5)),
+                         api_key=os.environ.get("OPENAI_API_KEY"),
+                         model=os.environ.get("OPENAI_DIGEST_MODEL", "gpt-4o-mini"),
+                         force=True)
+        print(f"자료집: {len(dg['items'])}항목 · {dg['chars']}자 — "
+              + ", ".join(i["title"] for i in dg["items"]))
+    except Exception as e:
+        print("자료집 건너뜀:", e)
+
     print(json.dumps({k: v for k, v in r.items() if k != "hygiene"},
                      ensure_ascii=False, indent=2, default=str))
     print("경고:", r["alerts"] or "없음")
@@ -73,4 +85,5 @@ for s, n, rt in summary:
     print(f"{s}: " + ("실패" if n < 0 else f"경고 {n}건") + (" · 재학습함" if rt else ""))
 if cloud.ERRORS:
     print("서버 오류:", cloud.ERRORS)
+
 
