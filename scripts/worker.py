@@ -61,6 +61,33 @@ def run_one(subject, fix, maintain_steps=None, label_limit=300):
     except Exception as e:
         print("자료집 건너뜀:", e)
 
+    # 자가 시험: 스스로 내고 풀고, 기계적으로 채점 (전략 성적 누적)
+    try:
+        import self_exam as se
+        ex = se.run(subject, api_key=os.environ.get("OPENAI_API_KEY"),
+                    model=os.environ.get("OPENAI_TAG_MODEL", "gpt-4o-mini"),
+                    n_retrieval=int(os.environ.get("EXAM_RETRIEVAL", 30)),
+                    n_cloze=int(os.environ.get("EXAM_CLOZE", 8)))
+        if "error" in ex:
+            print("자가 시험:", ex["error"])
+        else:
+            print(f"자가 시험: 검색 {ex['retrieval'].get('ok', 0)}/{ex['retrieval'].get('n', 0)} · "
+                  f"빈칸 {ex['cloze'].get('ok', 0)}/{ex['cloze'].get('n', 0)} · "
+                  f"전략 {[(a['전략'], round(a['성공률'], 2) if a['성공률'] is not None else '-') for a in ex['arms']]}")
+            # 결핍만 웹에서 찾아 수집함에 쌓기 (자료로 넣지는 않음 — 사람이 채택)
+            bkey = os.environ.get("BRAVE_API_KEY")
+            if bkey:
+                import gap_search as gs
+                lab = se.load(subject)
+                gaps = se.top_gaps(lab, n=int(os.environ.get("GAP_QUERIES", 5)),
+                                   only_unsearched=True)
+                if gaps:
+                    n = gs.collect(subject, gaps, bkey)
+                    se.save(subject, lab)
+                    print(f"결핍 검색: 구멍 {len(gaps)}곳 → 후보 {n}건 (검토 대기)")
+    except Exception as e:
+        print("자가 시험 건너뜀:", e)
+
     print(json.dumps({k: v for k, v in r.items() if k != "hygiene"},
                      ensure_ascii=False, indent=2, default=str))
     print("경고:", r["alerts"] or "없음")
