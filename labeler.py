@@ -13,7 +13,6 @@ labeler.py — 2층: LLM이 붙인 라벨을 쌓아 '로컬 태거'로 증류한
 로컬 태거는 '제안'이다. 자료에 쓰는 값은 사람이 확정한다.
 """
 from __future__ import annotations
-CORE_VERSION = "13.3"
 import os, json, pickle, time
 import numpy as np
 
@@ -27,6 +26,9 @@ except Exception:
     def _cloud_push(path, **kw): return False
 
 QTYPES = ["개념설명", "사례적용", "지도방안", "자료해석", "비교분석", "서술평가", "기타"]
+AREAS = ["듣기·말하기", "읽기", "쓰기", "문법", "문학", "매체",
+         "수와 연산", "도형", "측정", "규칙성", "자료와 가능성",
+         "총론", "평가", "교수학습", "기타"]
 LEVELS = ["상", "중", "하"]
 
 SYSTEM = """너는 임용 기출/자료 한 쪽을 읽고 라벨만 붙이는 분류기다. JSON 하나만 출력한다.
@@ -35,6 +37,16 @@ SYSTEM = """너는 임용 기출/자료 한 쪽을 읽고 라벨만 붙이는 �
  "level":"상|중|하",
  "why":"한 줄 근거"}
 본문에 없는 내용을 추측해 넣지 말 것."""
+
+
+def clean_area(v):
+    """모델이 설명문을 그대로 베껴오는 일이 있어 값 자체를 검사한다."""
+    s = str(v or "").strip().strip('"\'')
+    if not s or len(s) > 12:
+        return ""
+    if any(ch in s for ch in "()/,\"'") or "모르" in s or "등" == s[-1:]:
+        return ""
+    return s
 
 
 def labels_path(subject): return paths._p(f"labels_{subject}.pkl")
@@ -76,7 +88,7 @@ def label_records(subject, records, api_key, model="gpt-4o-mini", limit=None,
             messages=[{"role": "system", "content": SYSTEM},
                       {"role": "user", "content": r.text[:3000]}])
         d = json.loads(resp.choices[0].message.content)
-        return {"area": str(d.get("area") or "").strip(),
+        return {"area": clean_area(d.get("area")),
                 "qtype": d.get("qtype") if d.get("qtype") in QTYPES else "기타",
                 "level": d.get("level") if d.get("level") in LEVELS else "중",
                 "why": str(d.get("why") or "")[:200],
