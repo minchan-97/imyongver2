@@ -119,27 +119,12 @@ def merge_new(existing, new_records):
     return existing + added, len(added)
 
 
-# ── core 파일 버전 확인 (app.py만 새로 올리고 core/를 안 올린 경우 방지) ──
-APP_VERSION = "13.3"
-_CORE_MODULES = ["cloud", "paths", "schema", "page_scan", "auto_tag", "drive",
-                 "resubject", "maintenance", "selfcheck", "daily_digest",
-                 "trend_lab", "labeler", "ingest_queue", "file_ingest",
-                 "study_state", "concept_dict", "exam_practice", "passage_cluster",
-                 "embedding", "som", "korean_tokenizer"]
-_stale = []
-for _mod in _CORE_MODULES:
-    try:
-        _m = __import__(_mod)
-        _v = getattr(_m, "CORE_VERSION", None)
-        if _v != APP_VERSION:
-            _stale.append(f"core/{_mod}.py (버전 {_v or '없음'} ≠ {APP_VERSION})")
-    except Exception as _e:
-        _stale.append(f"core/{_mod}.py (불러오기 실패: {_e})")
+# ── core 파일 버전 확인 (바뀐 파일만 올리다 빠뜨린 경우 방지) ──
+import version as _ver
+_stale = _ver.check()
 if _stale:
-    st.error(f"core 파일이 app.py(v{APP_VERSION})와 버전이 안 맞아요. "
-             "아래 파일을 같은 버전으로 올려주세요:\n\n"
-             + "\n".join("- " + s for s in _stale)
-             + "\n\n가장 확실한 방법: zip을 풀어 폴더째 덮어쓰기")
+    st.error(f"core 파일이 app.py(v{_ver.VERSION})와 안 맞아요. 아래 파일을 올려주세요:\n\n"
+             + "\n".join("- " + s for s in _stale))
     st.stop()
 
 # ── 접속 비밀번호 (배포 시 URL만 알면 누구나 자료를 바꿀 수 있으므로) ──
@@ -599,6 +584,7 @@ with tabin:
                 rows.append({"과목": s, "미리보기" if r["dry_run"] else "적용": "○",
                              "태그정리": len(r.get("fix_tags", [])),
                              "깨진글자": r.get("garbage", {}).get("n", 0),
+                             "영역정리": r.get("clean_areas", 0),
                              "중복": r.get("dedupe", 0),
                              "분할 대상": sp.get("split", 0),
                              "조각": f"{sp.get('before', 0)}→{sp.get('after', 0)}",
