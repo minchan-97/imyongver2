@@ -585,6 +585,7 @@ with tabin:
                              "태그정리": len(r.get("fix_tags", [])),
                              "깨진글자": r.get("garbage", {}).get("n", 0),
                              "영역정리": r.get("clean_areas", 0),
+                             "기출 과목이동": (r.get("exam_subject", {}) or {}).get("moves", 0),
                              "중복": r.get("dedupe", 0),
                              "분할 대상": sp.get("split", 0),
                              "조각": f"{sp.get('before', 0)}→{sp.get('after', 0)}",
