@@ -265,8 +265,8 @@ def run(subject, api_key=None, model="gpt-4o-mini", n_retrieval=30, n_cloze=8,
         log=print):
     from embedding import FrozenEmbedding
     from som import SOM
-    corpus = load_records_pkl(paths.l2_path(subject)) + \
-        load_records_pkl(paths.common_chongron_path())
+    import selfcheck as _sc
+    corpus = _sc.train_corpus(subject)      # L2 + L1(기출) + 공통
     if len(corpus) < 5:
         return {"error": f"{subject}: 자료가 적어 자가 시험을 건너뜁니다({len(corpus)}건)"}
     emb = (FrozenEmbedding.load(paths.emb_path(subject))
