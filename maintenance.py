@@ -15,7 +15,6 @@ SOM 지도도 흐려지고, 해설의 근거로 인용해도 어디가 근거인
 (서버에도 버전 백업이 쌓이므로 사이드바에서 되돌릴 수 있다.)
 """
 from __future__ import annotations
-CORE_VERSION = "13.3"
 import os, re, time, shutil
 from collections import Counter, defaultdict
 
@@ -111,6 +110,29 @@ def drop_garbage(subject, dry_run=True):
         if bad and not dry_run:
             _backup(path)
             save_records_pkl(keep, path)
+    return out
+
+
+def clean_areas(subject, dry_run=True):
+    """이미 저장된 엉뚱한 영역 값(설명문을 베낀 것 등)을 비운다."""
+    from labeler import clean_area
+    out = []
+    for path, layer in _files(subject):
+        recs = load_records_pkl(path)
+        bad = [r for r in recs if r.area and not clean_area(r.area)]
+        if not bad:
+            continue
+        out += [{"path": path, "value": r.area[:40], "source": r.source} for r in bad]
+        if not dry_run:
+            _backup(path)
+            new = []
+            for r in recs:
+                if r.area and not clean_area(r.area):
+                    d = r.to_dict()
+                    d["area"] = None
+                    r = Record(**{k: v for k, v in d.items() if k != "rec_id"})
+                new.append(r)
+            save_records_pkl(new, path)
     return out
 
 
@@ -261,6 +283,9 @@ def run(subject, steps=STEPS, dry_run=True, api_key=None, model="gpt-4o-mini",
     rep = {"subject": subject, "dry_run": dry_run}
     if "fix_tags" in steps:
         rep["fix_tags"] = fix_tags(subject, dry_run)
+    if "fix_tags" in steps:
+        ca = clean_areas(subject, dry_run)
+        rep["clean_areas"] = len(ca)
     if "garbage" in steps:
         g = drop_garbage(subject, dry_run)
         rep["garbage"] = {"n": len(g), "examples": g[:5]}
