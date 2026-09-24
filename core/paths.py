@@ -48,7 +48,8 @@ def all_paths(subject):
             _p(f"trendlab_{subject}.pkl"), _p(f"labels_{subject}.pkl"),
             _p(f"tagger_{subject}.pkl"), _p(f"health_{subject}.pkl"),
             _p(f"digest_{subject}.pkl"), _p("ingest_queue.pkl"),
-            _p(f"selfexam_{subject}.pkl"), _p(f"webfind_{subject}.pkl")]
+            _p(f"selfexam_{subject}.pkl"), _p(f"webfind_{subject}.pkl"),
+            _p(f"askbox_{subject}.pkl")]
 
 
 def scan_cache_path(): return _p("scan_cache.pkl")   # 페이지 스캔 결과 캐시(전 과목 공용)
