@@ -88,6 +88,18 @@ def run_one(subject, fix, maintain_steps=None, label_limit=300):
     except Exception as e:
         print("자가 시험 건너뜀:", e)
 
+    # AI의 질문 만들기 (측정된 불확실성 → 아침에 사람이 답함)
+    try:
+        import ask_box as ab
+        made = ab.generate(subject, n=int(os.environ.get("ASK_N", 6)),
+                           api_key=os.environ.get("OPENAI_API_KEY"),
+                           model=os.environ.get("OPENAI_TAG_MODEL", "gpt-4o-mini"))
+        s = ab.summary(subject)
+        print(f"AI 질문: 새로 {made}개 · 대기 {s['open']}개 · "
+              f"답변 누적 {s['answered']}개(도움 {s['helped']})")
+    except Exception as e:
+        print("질문 생성 건너뜀:", e)
+
     print(json.dumps({k: v for k, v in r.items() if k != "hygiene"},
                      ensure_ascii=False, indent=2, default=str))
     print("경고:", r["alerts"] or "없음")
