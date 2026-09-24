@@ -6,7 +6,7 @@ schema.py — 모든 자료의 공통 레코드 구조.
 어디서 왔는지를 들고 있어야 한다.
 """
 from __future__ import annotations
-CORE_VERSION = "13.2"
+CORE_VERSION = "13.3"
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 import json
@@ -133,3 +133,4 @@ def load_records_pkl(path):
     with open(path, "rb") as f:
         data = _pickle.load(f)
     return [Record.from_dict(d) for d in data]
+
