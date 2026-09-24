@@ -10,7 +10,6 @@ paths.py — 과목별 데이터/산출물 pkl 경로를 한 곳에서 관리.
 
 과목만 바꾸면 다른 과목으로 그대로 복제된다.
 """
-CORE_VERSION = "13.3"
 import os
 
 BASE = os.path.join(os.path.dirname(__file__), "..", "data")
@@ -48,7 +47,8 @@ def all_paths(subject):
             common_chongron_path(), scan_cache_path(), drive_state_path(),
             _p(f"trendlab_{subject}.pkl"), _p(f"labels_{subject}.pkl"),
             _p(f"tagger_{subject}.pkl"), _p(f"health_{subject}.pkl"),
-            _p(f"digest_{subject}.pkl"), _p("ingest_queue.pkl")]
+            _p(f"digest_{subject}.pkl"), _p("ingest_queue.pkl"),
+            _p(f"selfexam_{subject}.pkl"), _p(f"webfind_{subject}.pkl")]
 
 
 def scan_cache_path(): return _p("scan_cache.pkl")   # 페이지 스캔 결과 캐시(전 과목 공용)
