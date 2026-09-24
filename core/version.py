@@ -7,7 +7,7 @@ version.py — 버전과 '이 버전이 필요로 하는 함수' 목록.
 
 새 기능을 만들면 그 함수 이름을 여기에 추가할 것.
 """
-VERSION = "13.4"
+VERSION = "14.0"
 
 REQUIRES = {
     "cloud": ["sync", "push", "list_uploads", "download_upload", "list_local_names",
@@ -27,6 +27,9 @@ REQUIRES = {
     "labeler": ["label_records", "train_tagger", "tag", "clean_area"],
     "ingest_queue": ["add", "pending", "run_queue", "load",
                      "enqueue_all_uploads", "enqueue_drive_new"],
+    "self_exam": ["run", "load", "arm_table", "top_gaps", "retrieve"],
+    "gap_search": ["collect", "pending", "accept", "reject", "domain_table",
+                   "mark_helped"],
 }
 
 
