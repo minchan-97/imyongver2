@@ -1307,7 +1307,8 @@ with tablab:
     _lab = tl.load_lab(subject)
     _years = sorted({r.year for r in l1 if r.year})
 
-    lt1, lt2, lt3 = st.tabs(["📊 통계", "🔮 예측·백테스트", "🏷️ 라벨 → 로컬 태거"])
+    lt1, lt2, lt3, lt4 = st.tabs(["📊 통계", "🔮 예측·백테스트", "🏷️ 라벨 → 로컬 태거",
+                                  "🧠 자가 학습"])
 
     with lt1:
         if not _years:
@@ -1452,6 +1453,84 @@ with tablab:
             if _q:
                 _r = lb.tag(subject, _q)
                 st.write(_r or "벡터화 실패 — 임베딩에 없는 단어뿐이에요")
+
+
+
+    with lt4:
+        import self_exam as se, gap_search as gs
+        st.caption("워커가 밤에 스스로 문제를 내고 풉니다. 채점은 LLM이 아니라 "
+                   "자료 자체가 해요 — 같은 성취기준 자료를 찾아왔는지, 가린 낱말을 "
+                   "복원했는지로 봅니다. 그래서 자기가 자기를 칭찬하는 구간이 없어요.")
+        _lab = se.load(subject)
+        _runs = _lab["runs"]
+        if _runs:
+            _last = _runs[-1]
+            m1, m2, m3 = st.columns(3)
+            m1.metric("근거 검색", f"{_last['retrieval'].get('ok', 0)}/{_last['retrieval'].get('n', 0)}")
+            m2.metric("빈칸 복원", f"{_last['cloze'].get('ok', 0)}/{_last['cloze'].get('n', 0)}")
+            m3.metric("못 찾은 곳", len(_lab["gaps"]))
+            st.caption(f"마지막 실행 {time.strftime('%m-%d %H:%M', time.localtime(_last['at']))}")
+        else:
+            st.info("아직 자가 시험 기록이 없어요. 워커가 돌면 채워져요.")
+
+        st.write("**전략 성적** (근거를 어떻게 찾을지 — 성적 좋은 쪽을 더 씁니다)")
+        st.dataframe([{"전략": r["전략"], "시행": r["시행"],
+                       "성공률": (f"{r['성공률']:.0%}" if r["성공률"] is not None else "—")}
+                      for r in se.arm_table(_lab)],
+                     use_container_width=True, hide_index=True)
+        st.caption("code=성취기준 코드 · node=SOM 개념영역 · keyword=낱말 겹침 · embed=임베딩 유사도")
+
+        _gaps = se.top_gaps(_lab, n=12)
+        if _gaps:
+            st.write("**근거를 못 찾는 곳** (자료가 비어 있다는 신호)")
+            st.dataframe([{"항목": g["key"], "실패": g["misses"],
+                           "이유": g["why"], "검색함": "○" if g.get("searched") else "",
+                           "본문": (g.get("sample") or "")[:50]} for g in _gaps],
+                         use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        st.write("**🌐 웹 수집함** — 워커가 구멍을 메우려고 찾아둔 후보예요. "
+                 "채택해야 자료가 됩니다.")
+        _bkey = api_key("Brave API Key", "BRAVE_API_KEY", "se_brave")
+        if _gaps and _bkey and st.button("🔎 지금 구멍 검색", key="se_search"):
+            n = gs.collect(subject, [g for g in _gaps if not g.get("searched")][:5],
+                           _bkey, log=lambda *a: None)
+            se.save(subject, _lab)
+            st.success(f"후보 {n}건 수집")
+            st.rerun()
+        _cands = gs.pending(subject)
+        if not _cands:
+            st.caption("검토할 후보가 없어요.")
+        else:
+            import pandas as pd
+            _cdf = pd.DataFrame([{
+                "#": i, "채택": c["trust"] >= 0.8, "신뢰": int(c["trust"] * 100),
+                "도메인": c["domain"], "제목": c["title"][:60],
+                "메우려는 곳": c["gap_key"], "발췌": c["text"][:120]}
+                for i, c in enumerate(_cands[:40])])
+            _ced = st.data_editor(
+                _cdf, hide_index=True, use_container_width=True,
+                disabled=["#", "신뢰", "도메인", "제목", "메우려는 곳", "발췌"],
+                column_config={"#": None,
+                               "신뢰": st.column_config.ProgressColumn(
+                                   min_value=0, max_value=100, format="%d%%"),
+                               "발췌": st.column_config.TextColumn(width="large")},
+                key="se_cands")
+            ca, cb = st.columns(2)
+            if ca.button("✅ 체크한 것 자료로 채택", type="primary", key="se_acc"):
+                ids = [_cands[int(r["#"])]["id"] for _, r in _ced.iterrows() if r["채택"]]
+                n = gs.accept(subject, ids)
+                st.success(f"{n}건 자료로 편입 — 다음 자가 시험이 도움이 됐는지 확인해요")
+                st.rerun()
+            if cb.button("🗑️ 체크 안 한 것 버리기", key="se_rej"):
+                ids = [_cands[int(r["#"])]["id"] for _, r in _ced.iterrows() if not r["채택"]]
+                st.info(f"{gs.reject(subject, ids)}건 버림")
+                st.rerun()
+        _dt = gs.domain_table(subject)
+        if _dt:
+            st.write("**출처 성적** (채택한 자료가 실제로 구멍을 메웠는지)")
+            st.dataframe([{**r, "도움률": (f"{r['도움률']:.0%}" if r["도움률"] is not None else "—")}
+                          for r in _dt[:10]], use_container_width=True, hide_index=True)
 
 
 # ══════════════════════════════════════════════════════════════
