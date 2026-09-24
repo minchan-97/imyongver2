@@ -12,7 +12,7 @@ passage_cluster.py — 기출 지문(제시문) 전용 관리 + 유사 지문 �
   sklearn 있으면 사용, 없으면 numpy k-means 폴백(의존성 최소화).
 """
 from __future__ import annotations
-CORE_VERSION = "13.2"
+CORE_VERSION = "13.3"
 import os, pickle, hashlib
 import numpy as np
 
@@ -134,3 +134,4 @@ def group_by_cluster(passages, labels, valid_idx):
     for lab, idx in zip(labels, valid_idx):
         groups[int(lab)].append(idx)
     return dict(groups)
+
