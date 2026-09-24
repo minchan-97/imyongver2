@@ -9,7 +9,7 @@ exam_practice.py — 수능형(기타형) 문제 순수 연습.
 유형은 미리 못 박지 않고, 사용자가 풀면서 스스로 붙인다(자유 태그).
 """
 from __future__ import annotations
-CORE_VERSION = "13.2"
+CORE_VERSION = "13.3"
 import os, pickle, time
 
 try:
@@ -87,3 +87,4 @@ class ExamWeakness:
             with open(path, "rb") as f:
                 w.type_stats = pickle.load(f)
         return w
+
