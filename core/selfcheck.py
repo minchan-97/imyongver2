@@ -13,7 +13,6 @@ selfcheck.py — 자기검증. 앱 버튼으로도, 나중에 워커/크론으�
 추이(직전 회차 대비)가 있어야 '나빠졌다'를 말할 수 있어서 이력을 남긴다.
 """
 from __future__ import annotations
-CORE_VERSION = "13.3"
 import os, re, sys, time, pickle, hashlib
 from collections import Counter
 
@@ -91,6 +90,13 @@ def check_hygiene(l2, l1, common):
 
 
 # ── 2) 모델 품질 ─────────────────────────────────────────────
+def train_corpus(subject):
+    """학습에 쓸 자료 = L2 + L1(기출) + 공통. 기출만 있는 과목도 지도가 생긴다."""
+    return (load_records_pkl(paths.l2_path(subject))
+            + load_records_pkl(paths.l1_path(subject))
+            + load_records_pkl(paths.common_chongron_path()))
+
+
 def check_model(subject, l2, prev=None):
     out = {"trained": False}
     ep, sp = paths.emb_path(subject), paths.som_path(subject)
@@ -227,13 +233,14 @@ def run(subject, fix=False, dim=32, grid=10):
                               "tag_gaps": resubject.tag_gaps(subject)}
     except Exception as e:
         rep["subject_mix"] = {"error": str(e)}
-    rep["model"] = check_model(subject, l2, prev)
+    corpus = train_corpus(subject)
+    rep["model"] = check_model(subject, corpus, prev)
     rep["regression"] = check_regression(subject, l2, common)
     rep["retrained"] = None
-    if fix and rep["model"].get("needs_retrain") and len(l2) >= 3:
+    if fix and rep["model"].get("needs_retrain") and len(corpus) >= 3:
         try:
-            rep["retrained"] = retrain(subject, l2, dim=dim, grid=grid)
-            rep["model_after"] = check_model(subject, l2, prev)
+            rep["retrained"] = retrain(subject, corpus, dim=dim, grid=grid)
+            rep["model_after"] = check_model(subject, corpus, prev)
         except Exception as e:
             rep["retrained"] = {"error": str(e)}
 
@@ -278,4 +285,3 @@ if __name__ == "__main__":
     print(json.dumps({k: v for k, v in r.items() if k != "hygiene"},
                      ensure_ascii=False, indent=2, default=str))
     print("경고:", r["alerts"] or "없음")
-
