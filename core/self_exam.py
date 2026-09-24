@@ -165,8 +165,12 @@ def run_retrieval(subject, corpus, lab, n=30, emb=None, som=None, rng=None, log=
         a["wins"] += 1.0 if ok else 0.0
         tried += 1
         wins += int(ok)
+        key = q.code or base(q)
         lab["history"].append({"kind": "retrieval", "arm": arm, "ok": ok,
-                               "key": q.code or base(q), "at": time.time()})
+                               "key": key, "at": time.time()})
+        if ok and key in lab["gaps"] and not lab["gaps"][key].get("fixed"):
+            lab["gaps"][key]["fixed"] = True        # 구멍이 메워짐
+            _credit(subject, key)                    # 답·웹자료에 공을 돌린다
         if not ok:
             _mark_gap(lab, q, "근거 검색 실패")
     return {"n": tried, "ok": wins, "rate": wins / max(tried, 1)}
@@ -239,6 +243,16 @@ def run_cloze(subject, corpus, lab, api_key, model="gpt-4o-mini", n=10,
         if not ok:
             _mark_gap(lab, q, f"빈칸 복원 실패({term})")
     return {"n": tried, "ok": wins, "rate": wins / max(tried, 1), "items": items[:10]}
+
+
+def _credit(subject, gap_key):
+    """구멍이 메워졌을 때, 그 구멍에 기여한 사람 답변·웹 출처의 성적을 올린다."""
+    for mod in ("ask_box", "gap_search"):
+        try:
+            m = __import__(mod)
+            m.mark_helped(subject, gap_key, True)
+        except Exception:
+            pass
 
 
 # ── 결핍(구멍) 기록 ─────────────────────────────────────────
