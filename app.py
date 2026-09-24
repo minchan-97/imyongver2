@@ -403,6 +403,53 @@ with tabday:
                         st.rerun()
                 b2.caption("읽으면 다음 복습일이 1→3→7→14→30일로 밀려요")
 
+    # ── AI의 질문 ─────────────────────────────────────────────
+    import ask_box as ab
+    st.markdown("---")
+    _asum = ab.summary(subject)
+    st.subheader(f"❓ AI의 질문 {_asum['open']}개")
+    st.caption("제가 모르는 걸 물어요. 지어낸 궁금증이 아니라 실제로 막힌 지점이에요 — "
+               "근거를 못 찾은 개념, 판독이 흐린 글자, 분류가 안 되는 자료, "
+               "기출 통계에서 보이는 변화요. 답해 주시면 자료로 들어가서 "
+               "다음부터 근거로 쓰이고, 그 답이 실제로 도움이 됐는지도 확인해요.")
+    if _asum["answered"]:
+        st.caption(f"지금까지 답변 {_asum['answered']}개 · 그중 구멍을 메운 것 "
+                   f"{_asum['helped']}개")
+
+    _okey_ab = api_key("OpenAI Key(선택)", "OPENAI_API_KEY", "ab_key")
+    if st.button("🔄 질문 다시 뽑기", key="ab_gen"):
+        n = ab.generate(subject, api_key=_okey_ab or None,
+                        model=cloud.cfg("OPENAI_TAG_MODEL") or "gpt-4o-mini",
+                        log=lambda *a: None)
+        st.success(f"새 질문 {n}개") if n else st.info("새로 물을 게 없어요")
+        st.rerun()
+
+    _qs = ab.pending(subject)
+    if not _qs:
+        st.caption("지금은 물어볼 게 없어요. 워커가 돌면 다시 쌓여요.")
+    else:
+        from ask_box import KINDS
+        for _q in _qs[:5]:
+            with st.expander(f"[{KINDS.get(_q['kind'], _q['kind'])}] {_q['question'][:60]}…",
+                             expanded=(_q is _qs[0])):
+                st.write(_q["question"])
+                if _q.get("context"):
+                    st.caption("관련 내용")
+                    st.code(_q["context"][:400])
+                st.caption(f"묻는 이유: {_q.get('why', '')}")
+                _ans = st.text_area("답변", key=f"ab_txt_{_q['id']}", height=120,
+                                    placeholder="아는 만큼만 적어도 돼요. 자료로 저장돼요.")
+                b1, b2 = st.columns(2)
+                if b1.button("✅ 답변 저장", key=f"ab_save_{_q['id']}", type="primary"):
+                    if ab.answer(subject, _q["id"], _ans):
+                        st.success("자료로 저장했어요 — 다음부터 근거로 씁니다")
+                        st.rerun()
+                    else:
+                        st.warning("답변을 적어주세요")
+                if b2.button("건너뛰기", key=f"ab_skip_{_q['id']}"):
+                    ab.skip(subject, _q["id"])
+                    st.rerun()
+
     _hist = [d for d in dd.recent(subject, 7) if d["date"] != _today]
     if _hist:
         with st.expander(f"🗓️ 지난 자료집 {len(_hist)}일"):
