@@ -104,7 +104,7 @@ def page_scan_ui(prefix, ups, concept_names=None, handwriting=False):
         st.rerun()
     if needs_key:
         with st.expander("🖼️ 원본 페이지와 비교"):
-            pg = st.number_input("쪽", 1, len(res), 1, key=f"{prefix}_pv")
+            pg = st.number_input("쪽", 1, max(1, len(res)), 1, key=f"{prefix}_pv")
             img = render_source(pages[pg - 1])
             if img:
                 st.image(img, use_container_width=True)
@@ -1415,8 +1415,10 @@ with tablab:
         _todo = [r for r in _pool if r.rec_id not in _store]
         st.caption(f"라벨 {len(_store)}건 · 아직 없는 자료 {len(_todo)}건")
         if okey_lab and _todo:
-            n_lab = st.number_input("한 번에 라벨 붙일 개수", 10, 500, min(100, len(_todo)),
-                                    step=10, key="lab_n")
+            # 남은 자료가 10건 미만이어도 오류가 나지 않게 범위를 자료 수에 맞춘다
+            _max_lab = max(1, min(500, len(_todo)))
+            n_lab = st.number_input("한 번에 라벨 붙일 개수", 1, _max_lab,
+                                    min(100, _max_lab), step=10, key="lab_n")
             if st.button("🏷️ 라벨 붙이기", type="primary", key="lab_go"):
                 bar = st.progress(0.0, text="라벨 중…")
                 _store, done = lb.label_records(
