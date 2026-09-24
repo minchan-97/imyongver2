@@ -20,7 +20,7 @@ resubject.py — 이미 저장된 자료의 '과목'이 맞는지 다시 판정�
 이 모듈은 '제안'만 만든다. 실제 이동은 사람이 확인한 것만 apply_moves()로 수행한다.
 """
 from __future__ import annotations
-CORE_VERSION = "13.2"
+CORE_VERSION = "13.3"
 import re
 from collections import Counter, defaultdict
 
