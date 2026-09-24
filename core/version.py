@@ -7,7 +7,7 @@ version.py — 버전과 '이 버전이 필요로 하는 함수' 목록.
 
 새 기능을 만들면 그 함수 이름을 여기에 추가할 것.
 """
-VERSION = "14.0"
+VERSION = "14.1"
 
 REQUIRES = {
     "cloud": ["sync", "push", "list_uploads", "download_upload", "list_local_names",
@@ -18,10 +18,11 @@ REQUIRES = {
     "auto_tag": ["classify"],
     "drive": ["list_folder", "download", "DriveState", "dedupe", "folder_id"],
     "resubject": ["audit", "tag_gaps", "propagate_tags", "undetermined_docs",
-                  "judge_docs_llm", "apply_doc_decisions", "judge"],
+                  "judge_docs_llm", "apply_doc_decisions", "judge",
+                  "exam_pages", "judge_exam_pages", "apply_exam_moves"],
     "maintenance": ["run", "STEPS", "APP_STEPS", "is_garbage", "subject_list",
                     "clean_areas", "drop_garbage"],
-    "selfcheck": ["run", "retrain", "auto_epochs", "load_history"],
+    "selfcheck": ["run", "retrain", "auto_epochs", "load_history", "train_corpus"],
     "daily_digest": ["build", "mark_read", "recent", "today_str", "load_store"],
     "trend_lab": ["stats", "predict", "backtest", "summary", "load_lab", "top_rules"],
     "labeler": ["label_records", "train_tagger", "tag", "clean_area"],
