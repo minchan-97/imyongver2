@@ -20,7 +20,7 @@ Supabase에 들어가는 것
 예전처럼 로컬 pkl만으로 동작한다. 서버 오류가 나도 로컬 저장은 막지 않는다.
 """
 from __future__ import annotations
-CORE_VERSION = "13.2"
+CORE_VERSION = "13.3"
 import os, time, hashlib
 
 BUCKET_ART = "artifacts"
@@ -363,3 +363,4 @@ def archive_upload(subject: str, kind: str, filename: str, raw: bytes):
     except Exception as e:
         _err(f"원본보관 {filename}", e)
         return None
+
