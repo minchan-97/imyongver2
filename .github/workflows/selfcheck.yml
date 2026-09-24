@@ -1,0 +1,44 @@
+name: selfcheck
+on:
+  schedule:
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+    inputs:
+      subject:
+        description: "과목 (비우면 자료가 있는 과목 전부)"
+        default: "all"
+      maintain:
+        description: "자료 정비도 할지 (on / off / 단계 쉼표)"
+        default: "on"
+      rescan_all:
+        description: "보관된 원본 전부 다시 읽기 (off / on / 과목명)"
+        default: "off"
+      wipe_first:
+        description: "다시 읽기 전에 기존 기록 비우기 (off / on)"
+        default: "off"
+      queue_limit:
+        description: "이번 회차에 스캔할 최대 파일 수"
+        default: "20"
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DRIVE_FOLDERS: ${{ secrets.DRIVE_FOLDERS }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          SUBJECT: ${{ inputs.subject || 'all' }}
+          MAINTAIN: ${{ inputs.maintain || 'on' }}
+          LABEL_LIMIT: "300"
+          QUEUE_LIMIT: ${{ inputs.queue_limit || '20' }}
+          RESCAN_ALL: ${{ inputs.rescan_all || 'off' }}
+          WIPE_FIRST: ${{ inputs.wipe_first || 'off' }}
+        run: python scripts/worker.py --fix
