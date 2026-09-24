@@ -143,6 +143,8 @@ def _vectors(records, emb):
 def train_tagger(subject, records, fields=("area", "qtype", "level"), holdout=0.2,
                  min_per_class=3, seed=0):
     """라벨 있는 기록으로 분류기 학습. 반환: 필드별 홀드아웃 정확도."""
+    if not os.path.exists(paths.emb_path(subject)):
+        raise ValueError(f"{subject}: 임베딩이 없어요. 먼저 학습(또는 워커 재학습)을 돌리세요.")
     emb = FrozenEmbedding.load(paths.emb_path(subject))
     store = load_labels(subject)
     labeled = [r for r in records if r.rec_id in store and "error" not in store[r.rec_id]]
@@ -203,7 +205,7 @@ def load_tagger(subject):
 def tag(subject, text, tagger=None, emb=None):
     """LLM 없이 로컬 태거로 라벨 제안. 반환: {field: (값, 확신도)}"""
     tagger = tagger or load_tagger(subject)
-    if not tagger:
+    if not tagger or not os.path.exists(paths.emb_path(subject)):
         return None
     emb = emb or FrozenEmbedding.load(paths.emb_path(subject))
     v = emb.embed_tokens(tokenize(text))
