@@ -20,7 +20,6 @@ resubject.py — 이미 저장된 자료의 '과목'이 맞는지 다시 판정�
 이 모듈은 '제안'만 만든다. 실제 이동은 사람이 확인한 것만 apply_moves()로 수행한다.
 """
 from __future__ import annotations
-CORE_VERSION = "13.3"
 import re
 from collections import Counter, defaultdict
 
@@ -401,3 +400,120 @@ def apply_doc_decisions(rows):
         else:
             save_records_pkl(stay + new_hit, r["path"])
     return moved, tagged
+
+
+# ── 기출 쪽별 과목 재배정 ────────────────────────────────────
+EXAM_SYSTEM = """너는 초등 임용 시험지 한 쪽을 읽고 '어느 교과 문항인지'만 판정한다.
+JSON 하나만 출력한다.
+{"subject":"국어|영어|수학|사회|과학|미술|음악|체육|실과|도덕|총론|창의적체험활동|통합교과 중 하나",
+ "area":"영역 이름 한 낱말(모르면 \"\")",
+ "confidence":0.0~1.0,
+ "reason":"근거 한 줄"}
+교육과정 총론·교직 일반(편성운영, 창의적체험활동 운영 등)은 subject를 '총론'으로.
+표지·안내문·배점표만 있는 쪽은 confidence를 0.2 이하로."""
+
+
+def exam_pages(subject_list=None, layers=("L1_pattern",)):
+    """기출(L1) 기록을 쪽 단위로 모은다."""
+    subject_list = subject_list or sorted(SUBJECTS - {"공통"})
+    out = []
+    for subj in subject_list:
+        path = paths.l1_path(subj)
+        for rec in load_records_pkl(path):
+            out.append({"path": path, "layer": "L1_pattern", "current": subj,
+                        "rec_id": rec.rec_id, "source": rec.source,
+                        "text": rec.text, "code": rec.code, "area": rec.area})
+    return out
+
+
+def judge_exam_pages(pages, api_key=None, model="gpt-4o-mini", workers=6,
+                     min_conf=0.6, progress=None):
+    """
+    쪽마다 과목 판정. 코드가 있으면 규칙으로 끝내고(공짜),
+    없을 때만 LLM에 묻는다. 반환: 이동이 필요한 쪽만.
+    """
+    import json
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    out, need_llm = [], []
+    for p in pages:
+        subj, conf, ev = judge(p["text"], p["code"])
+        if subj and conf >= 0.9:                 # 코드 등 확실한 근거
+            if subj != p["current"]:
+                out.append({**p, "proposed": subj, "conf": conf, "area": p["area"],
+                            "evidence": ev, "by": "규칙"})
+        else:
+            need_llm.append(p)
+    if api_key and need_llm:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+
+        def work(p):
+            resp = client.chat.completions.create(
+                model=model, temperature=0, response_format={"type": "json_object"},
+                messages=[{"role": "system", "content": EXAM_SYSTEM},
+                          {"role": "user", "content": p["text"][:3000]}])
+            j = json.loads(resp.choices[0].message.content)
+            s = j.get("subject") if j.get("subject") in SUBJECTS else None
+            try:
+                c = max(0.0, min(1.0, float(j.get("confidence", 0.5))))
+            except Exception:
+                c = 0.5
+            from labeler import clean_area
+            return s, c, clean_area(j.get("area")), str(j.get("reason") or "")[:100]
+
+        done = 0
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(work, p): p for p in need_llm}
+            for fut in as_completed(futs):
+                p = futs[fut]
+                try:
+                    s, c, area, why = fut.result()
+                    if s and c >= min_conf and (s != p["current"] or
+                                                (area and not p["area"])):
+                        out.append({**p, "proposed": s, "conf": c,
+                                    "area": area or p["area"],
+                                    "evidence": ["LLM: " + why], "by": "LLM"})
+                except Exception as e:
+                    pass
+                done += 1
+                if progress:
+                    progress(done, len(need_llm))
+    out.sort(key=lambda x: -x["conf"])
+    return out
+
+
+def apply_exam_moves(rows):
+    """판정대로 기출 쪽을 과목별 L1로 옮긴다(영역도 비어 있으면 채움)."""
+    from collections import defaultdict as _dd
+    by_src = _dd(list)
+    for r in rows:
+        by_src[r["path"]].append(r)
+    moved = 0
+    for path, rs in by_src.items():
+        recs = load_records_pkl(path)
+        plan = {r["rec_id"]: r for r in rs}
+        keep, move = [], []
+        for rec in recs:
+            (move if rec.rec_id in plan else keep).append(rec)
+        if not move:
+            continue
+        buckets = {}
+        for rec in move:
+            r = plan[rec.rec_id]
+            d = rec.to_dict()
+            d["subject"] = r["proposed"]
+            if r.get("area") and not d.get("area"):
+                d["area"] = r["area"]
+            nr = Record(**{k: v for k, v in d.items() if k != "rec_id"})
+            buckets.setdefault(paths.l1_path(r["proposed"]), []).append(nr)
+        save_records_pkl(keep, path)
+        for tgt, recs2 in buckets.items():
+            cur = load_records_pkl(tgt)
+            have = {x.rec_id for x in cur}
+            for nr in recs2:
+                if nr.rec_id not in have:
+                    cur.append(nr)
+                    have.add(nr.rec_id)
+                    moved += 1
+            save_records_pkl(cur, tgt)
+    return moved
