@@ -120,7 +120,7 @@ def merge_new(existing, new_records):
 
 
 # ── core 파일 버전 확인 (app.py만 새로 올리고 core/를 안 올린 경우 방지) ──
-APP_VERSION = "13.2"
+APP_VERSION = "13.3"
 _CORE_MODULES = ["cloud", "paths", "schema", "page_scan", "auto_tag", "drive",
                  "resubject", "maintenance", "selfcheck", "daily_digest",
                  "trend_lab", "labeler", "ingest_queue", "file_ingest",
@@ -378,7 +378,9 @@ with tabday:
 
     if not _dg:
         st.info("아직 오늘 자료집이 없어요. 위 버튼을 누르거나, 새벽 워커가 만들어 두면 자동으로 떠요.")
-        st.caption(f"현재 {subject} 보유: 자료 {len(l2)}건 · 기출 {len(l1)}건 "
+        _n_l2 = len(load_records_pkl(paths.l2_path(subject)))
+        _n_l1 = len(load_records_pkl(paths.l1_path(subject)))
+        st.caption(f"현재 {subject} 보유: 자료 {_n_l2}건 · 기출 {_n_l1}건 "
                    f"(기출만 있어도 편성돼요)")
     else:
         _done = sum(i["read"] for i in _dg["items"])
@@ -1878,4 +1880,3 @@ with tabp:
                     for q in s["questions"]:
                         st.write(f"- {q}")
                 st.caption(f"출처: {s['source']}")
-
