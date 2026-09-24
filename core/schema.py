@@ -6,7 +6,6 @@ schema.py — 모든 자료의 공통 레코드 구조.
 어디서 왔는지를 들고 있어야 한다.
 """
 from __future__ import annotations
-CORE_VERSION = "13.3"
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 import json
@@ -30,6 +29,7 @@ DOC_TYPES = {
     "지도서_총론",       # 과목별. 그 과목 교수법·평가
     "지도서_각론",       # 과목별. 단원별 개념(개념의 축)
     "개인_필기",         # 내 손글씨 노트·정리본 (공식 자료와 구분해 추적)
+    "웹수집",            # 자가 시험이 못 찾은 구멍을 메우려 웹에서 채택한 자료
 }
 
 
@@ -133,4 +133,3 @@ def load_records_pkl(path):
     with open(path, "rb") as f:
         data = _pickle.load(f)
     return [Record.from_dict(d) for d in data]
-
