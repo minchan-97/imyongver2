@@ -274,8 +274,8 @@ def label_areas(subject, api_key, model="gpt-4o-mini", limit=300, dry_run=True,
 
 
 # ── 전체 실행 ────────────────────────────────────────────────
-STEPS = ("fix_tags", "garbage", "dedupe", "split", "label", "retrain")
-APP_STEPS = ("fix_tags", "garbage", "dedupe", "split", "label")   # 재학습은 오래 걸려 워커에 맡김
+STEPS = ("fix_tags", "garbage", "dedupe", "exam_subject", "split", "label", "retrain")
+APP_STEPS = ("fix_tags", "garbage", "dedupe", "exam_subject", "split", "label")   # 재학습은 오래 걸려 워커에 맡김
 
 
 def run(subject, steps=STEPS, dry_run=True, api_key=None, model="gpt-4o-mini",
@@ -291,6 +291,17 @@ def run(subject, steps=STEPS, dry_run=True, api_key=None, model="gpt-4o-mini",
         rep["garbage"] = {"n": len(g), "examples": g[:5]}
     if "dedupe" in steps:
         rep["dedupe"] = len(dedupe(subject, dry_run))
+    if "exam_subject" in steps:
+        try:
+            import resubject as rsj
+            pages = rsj.exam_pages([subject])
+            rows = rsj.judge_exam_pages(pages, api_key, model)
+            rep["exam_subject"] = {"pages": len(pages), "moves": len(rows),
+                                   "to": dict(Counter(r["proposed"] for r in rows))}
+            if rows and not dry_run:
+                rep["exam_subject"]["moved"] = rsj.apply_exam_moves(rows)
+        except Exception as e:
+            rep["exam_subject"] = {"error": str(e)}
     if "split" in steps:
         rep["split"] = split(subject, dry_run)
     if "label" in steps and api_key:
@@ -299,8 +310,9 @@ def run(subject, steps=STEPS, dry_run=True, api_key=None, model="gpt-4o-mini",
     if "retrain" in steps and not dry_run:
         try:
             import selfcheck
-            l2 = load_records_pkl(paths.l2_path(subject))
-            rep["retrain"] = selfcheck.retrain(subject, l2) if len(l2) >= 3 else "자료 부족"
+            corpus = selfcheck.train_corpus(subject)
+            rep["retrain"] = (selfcheck.retrain(subject, corpus) if len(corpus) >= 3
+                              else "자료 부족")
         except Exception as e:
             rep["retrain"] = {"error": str(e)}
     return rep
