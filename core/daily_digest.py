@@ -14,7 +14,6 @@ daily_digest.py — 매일 아침 '오늘 읽을 자료집'을 과목별로 자�
   {"days": {날짜: digest}, "schedule": {키: {last_read, streak, due}}}
 """
 from __future__ import annotations
-CORE_VERSION = "13.3"
 import os, re, json, time, pickle, random
 from collections import defaultdict, Counter
 
@@ -89,7 +88,7 @@ def _groups(subject, corpus):
         from som import SOM
         import os as _os
         sp = paths.som_path(subject)
-        if _os.path.exists(sp):
+        if _os.path.exists(sp) and _os.path.exists(paths.emb_path(subject)):
             som = SOM.load(sp)
             by_id = {r.rec_id: r for r in corpus}
             for node, ids in (som.node_rec_ids or {}).items():
