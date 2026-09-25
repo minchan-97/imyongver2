@@ -117,7 +117,11 @@ def queue():
     jobs = q.get("jobs", [])
     fail = [j for j in jobs if j["status"] == "error"]
     done = [j for j in jobs if j["status"] == "done"]
-    return {"대기": len([j for j in jobs if j["status"] == "queued"]),
+    prog = [{"파일": j["source"],
+             "진행": f"{j.get('next_page', 0)}/{(j.get('result') or {}).get('total_pages', '?')}쪽"}
+            for j in jobs if j["status"] == "queued" and j.get("next_page")]
+    return {"진행중": prog,
+            "대기": len([j for j in jobs if j["status"] == "queued"]),
             "완료": len(done), "실패": len(fail),
             "실패목록": [{"파일": j["source"],
                         "이유": str((j.get("result") or {}).get("error", ""))[:120]}
