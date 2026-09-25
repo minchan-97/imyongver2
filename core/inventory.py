@@ -10,7 +10,7 @@ inventory.py — 지금 자료가 어디에 얼마나 있는지 한눈에.
   queue()     스캔 대기열 상태와 실패 목록
 """
 from __future__ import annotations
-import os
+import os, re
 from collections import Counter, defaultdict
 
 import paths
@@ -83,7 +83,12 @@ def sources():
 
 
 def files():
-    """서버에 보관된 원본 ↔ 실제 들어간 쪽수 대조 (안 들어간 파일 찾기)."""
+    """
+    서버 보관 원본 ↔ 실제 들어간 쪽수 대조.
+    파일명과 출처 이름이 다를 수 있으므로(예: '2021학년도초등학교교육과정A.pdf' →
+    '2021학년도 초등학교 교사 임용후보자 선정경쟁시험') 대기열 기록으로 먼저 연결하고,
+    없으면 이름 비교로 넘어간다.
+    """
     try:
         import cloud
         ups = cloud.list_uploads()
@@ -91,19 +96,61 @@ def files():
         ups = []
     if not ups:
         return []
+
+    # 1) 대기열 기록: storage_path → (저장 쪽수, 출처, 진행 상태)
+    byjob = {}
+    try:
+        import ingest_queue as iq
+        for j in iq.load().get("jobs", []):
+            sp = j.get("storage_path")
+            if not sp:
+                continue
+            r = j.get("result") or {}
+            cur = byjob.setdefault(sp, {"쪽": 0, "출처": j.get("source", ""),
+                                        "상태": j["status"], "진행": ""})
+            cur["쪽"] += int(r.get("added") or 0)
+            cur["출처"] = j.get("source", cur["출처"])
+            if j["status"] == "queued" and j.get("next_page"):
+                cur["진행"] = f"{j['next_page']}/{r.get('total_pages', '?')}쪽 진행중"
+            elif j["status"] == "error":
+                cur["상태"] = "error"
+                cur["오류"] = str(r.get("error", ""))[:100]
+    except Exception:
+        pass
+
     src_pages = {r["출처"]: r["쪽"] for r in sources()}
+
+    def _norm(x):
+        return re.sub(r"[\s_\-\[\]()]+", "", x or "").lower()
+
+    norm_src = {_norm(k): v for k, v in src_pages.items()}
+
     rows = []
     for u in ups:
-        stem = os.path.splitext(u.get("original_name", ""))[0]
-        pages = src_pages.get(stem)
-        if pages is None:                       # 이름이 조금 달라도 찾아본다
-            hit = [k for k in src_pages if stem[:12] and stem[:12] in k]
-            pages = src_pages[hit[0]] if hit else 0
-        rows.append({"원본 파일": u.get("original_name", ""),
-                     "올린 과목": u.get("subject", ""),
+        sp = u.get("storage_path")
+        name = u.get("original_name", "")
+        stem = os.path.splitext(name)[0]
+        j = byjob.get(sp)
+        pages = src_pages.get(j["출처"]) if j and j.get("출처") in src_pages else None
+        if pages is None and j:
+            pages = j["쪽"] or None
+        if pages is None:                       # 이름으로 다시 찾아보기
+            pages = norm_src.get(_norm(stem))
+        if pages is None:
+            hit = [k for k in norm_src if _norm(stem)[:14] and _norm(stem)[:14] in k]
+            pages = norm_src[hit[0]] if hit else 0
+        if j and j.get("진행"):
+            status = "⏳ " + j["진행"]
+        elif j and j["상태"] == "error":
+            status = "❌ " + j.get("오류", "실패")
+        elif pages:
+            status = "✅"
+        else:
+            status = "⚠️ 아직 안 들어감"
+        rows.append({"원본 파일": name, "올린 과목": u.get("subject", ""),
                      "크기KB": (u.get("size_bytes") or 0) // 1024,
-                     "들어간 쪽": pages,
-                     "상태": "✅" if pages else "⚠️ 아직 안 들어감"})
+                     "들어간 쪽": pages or 0, "저장된 출처": (j or {}).get("출처", ""),
+                     "상태": status})
     rows.sort(key=lambda r: (r["들어간 쪽"] != 0, r["원본 파일"]))
     return rows
 
