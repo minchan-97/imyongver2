@@ -209,3 +209,4 @@ def summary():
             "총기출": sum(r["기출"] for r in ss),
             "총글자": sum(r["글자"] for r in ss),
             "문서수": len(sources())}
+
