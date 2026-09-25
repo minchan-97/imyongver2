@@ -305,6 +305,16 @@ def run(subject, steps=STEPS, dry_run=True, api_key=None, model="gpt-4o-mini",
     if "seed" in steps:
         try:
             import seed_rules as sr
+            # 전체를 훑기 전에 모든 과목 파일을 서버에서 받아온다.
+            # (앱은 과목을 하나씩 내려받으며 정비하므로, 받기 전에 seed가 돌면
+            #  아직 없는 과목 파일을 못 본다 — 통합교과가 총론에 남던 원인)
+            try:
+                import cloud
+                if cloud.enabled():
+                    for _s in subject_list(None):
+                        cloud.sync(paths.all_paths(_s))
+            except Exception:
+                pass
             # 파일명 규칙 재배치는 '이 과목 파일'만 봐서는 못 잡는다.
             # (통합교과 기본이론이 총론 파일에 들어 있으면 총론을 검사해야 잡힘)
             # 그래서 seed 단계만은 전체를 한 번에 훑는다.
