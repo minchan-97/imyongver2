@@ -1518,7 +1518,9 @@ with tablab:
             m1, m2, m3 = st.columns(3)
             m1.metric("근거 검색", f"{_last['retrieval'].get('ok', 0)}/{_last['retrieval'].get('n', 0)}")
             m2.metric("빈칸 복원", f"{_last['cloze'].get('ok', 0)}/{_last['cloze'].get('n', 0)}")
-            m3.metric("못 찾은 곳", len(_lab["gaps"]))
+            _fixed = sum(1 for g in _lab["gaps"].values() if g.get("fixed"))
+            m3.metric("못 찾은 곳", len(_lab["gaps"]) - _fixed,
+                      f"메움 {_fixed}" if _fixed else None)
             st.caption(f"마지막 실행 {time.strftime('%m-%d %H:%M', time.localtime(_last['at']))}")
         else:
             st.info("아직 자가 시험 기록이 없어요. 워커가 돌면 채워져요.")
