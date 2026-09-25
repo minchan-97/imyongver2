@@ -14,7 +14,6 @@ ingest_queue.py — 스캔까지 워커에 맡기기.
 사람이 거는 일(무엇을 다시 읽을지)과 기계가 하는 일(스캔·분류)을 나눠 둔 것.
 """
 from __future__ import annotations
-CORE_VERSION = "13.3"
 import os, time, pickle, hashlib
 
 import paths
@@ -105,6 +104,18 @@ def process(job, api_key, model=None, concept_names=None, log=print):
     subject = job.get("subject")
     doc_type = job.get("doc_type")
     year, level = job.get("year"), job.get("level")
+    if not subject:                       # 파일명으로 정해지는 건 LLM에 묻지 않는다
+        try:
+            import seed_rules as sr
+            v = sr.classify(job.get("filename") or name or job["source"])
+            if v["confidence"] >= 0.9:
+                subject = v["subject"]
+                doc_type = doc_type or v["doc_type"]
+                year = year or v["year"]
+                level = level or v["level"]
+                job["seed"] = v["reason"]
+        except Exception:
+            pass
     if not subject or not doc_type:                 # 비어 있으면 자동 분류가 채움
         tag = auto_tag.classify(name, res, api_key, model or "gpt-4o-mini")
         subject = subject or tag["subject"] or "국어"
@@ -115,7 +126,7 @@ def process(job, api_key, model=None, concept_names=None, log=print):
         job["auto_tag"] = {"category": tag["category"], "subject": tag["subject"],
                            "conf": tag["confidence"], "reason": tag["reason"]}
 
-    is_exam = bool(year)
+    is_exam = bool(year) or subject == "기출"
     path = paths.l1_path(subject) if is_exam else paths.l2_path(subject)
     existing = load_records_pkl(path)
     src = job["source"]
@@ -260,4 +271,3 @@ def enqueue_drive_new(folders, api_key_g=None, sa_json=None, log=print):
     if n:
         state.save()
     return n
-
