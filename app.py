@@ -678,9 +678,11 @@ with tabin:
         if m2.button("⚙️ 실제로 정비", type="primary", key="mt_go"):
             bar = st.progress(0.0, text="정비 중…")
             out = {}
-            for i, s in enumerate(_pick):
-                bar.progress(i / max(len(_pick), 1), text=f"{s} 정비 중…")
+            for i, s in enumerate(_pick):      # 정비 전에 전부 받아둔다
+                bar.progress(i / max(len(_pick), 1) * 0.3, text=f"{s} 받아오는 중…")
                 _pull(s)
+            for i, s in enumerate(_pick):
+                bar.progress(0.3 + i / max(len(_pick), 1) * 0.7, text=f"{s} 정비 중…")
                 out[s] = mt.run(s, tuple(_steps), False, _okey_mt or None,
                                 cloud.cfg("OPENAI_TAG_MODEL") or "gpt-4o-mini",
                                 int(_limit))
