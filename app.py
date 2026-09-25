@@ -489,6 +489,9 @@ with tabin:
 
         _q = inv.queue()
         st.write(f"**스캔 대기열** — 대기 {_q['대기']} · 완료 {_q['완료']} · 실패 {_q['실패']}")
+        if _q.get("진행중"):
+            st.caption("이어서 처리 중 (큰 파일은 회차를 나눠 읽어요)")
+            st.dataframe(_q["진행중"], use_container_width=True, hide_index=True)
         if _q["실패목록"]:
             st.error("들어가지 못한 파일")
             st.dataframe(_q["실패목록"], use_container_width=True, hide_index=True)
