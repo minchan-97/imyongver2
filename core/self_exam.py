@@ -274,6 +274,56 @@ def top_gaps(lab, n=10, only_unsearched=False):
     return gs[:n]
 
 
+# ── 답한 구멍 다시 풀어보기 ─────────────────────────────────
+def _fills_gap(rec, key):
+    """이 기록이 그 구멍을 겨냥한 것인가 (코드·영역 일치 또는 답변/웹수집의 출처 표기)."""
+    if rec.code and rec.code == key:
+        return True
+    if rec.area and rec.area == key:
+        return True
+    if rec.doc_type in ("내_답변", "웹수집") and key and key in (rec.source or ""):
+        return True
+    if rec.doc_type in ("내_답변", "웹수집") and key and key in (rec.text or "")[:200]:
+        return True
+    return False
+
+
+def retest_gaps(subject, corpus, lab, emb=None, som=None, log=print):
+    """
+    답변·웹수집으로 메워졌을 법한 구멍만 골라 다시 풀어본다.
+    (무작위 시험에 그 구멍이 다시 뽑히기를 기다리지 않고 직접 확인한다)
+    판정: 구멍의 본문을 질문으로 삼아 근거를 찾았을 때,
+          그 구멍을 겨냥한 자료가 실제로 검색되면 '메움'.
+    """
+    from schema import Record
+    fixed, checked = [], 0
+    for key, g in list(lab["gaps"].items()):
+        if g.get("fixed"):
+            continue
+        # '새로 들어온 자료'(내 답변·웹수집)가 이 구멍을 겨냥할 때만 다시 푼다.
+        # 원래 있던 자료로 우연히 검색되는 것은 메움으로 치지 않는다.
+        targets = [r for r in corpus if _fills_gap(r, key)]
+        if not any(r.doc_type in ("내_답변", "웹수집") for r in targets):
+            continue
+        checked += 1
+        sample = (g.get("sample") or key)
+        probe = Record(text=sample if len(sample) > 15 else f"{key} {sample}",
+                       layer="L2_corpus", subject=subject, source="probe")
+        found = False
+        for arm in ARMS:
+            got = retrieve(arm, probe, corpus, emb, som, k=5)
+            if any(_fills_gap(r, key) for r in got):
+                found = True
+                break
+        if found:
+            g["fixed"] = True
+            g["fixed_at"] = time.time()
+            fixed.append(key)
+            _credit(subject, key)
+            log(f"    구멍 메움: {key}")
+    return {"checked": checked, "fixed": fixed}
+
+
 # ── 한 회차 ─────────────────────────────────────────────────
 def run(subject, api_key=None, model="gpt-4o-mini", n_retrieval=30, n_cloze=8,
         log=print):
@@ -290,12 +340,16 @@ def run(subject, api_key=None, model="gpt-4o-mini", n_retrieval=30, n_cloze=8,
     lab = load(subject)
     rng = random.Random(int(time.time()) % 100000)
 
+    r0 = retest_gaps(subject, corpus, lab, emb, som, log)
+    if r0["fixed"]:
+        log(f"  답변·수집으로 메운 구멍 {len(r0['fixed'])}곳")
     r1 = run_retrieval(subject, corpus, lab, n_retrieval, emb, som, rng, log)
     log(f"  근거 검색 시험: {r1.get('ok', 0)}/{r1.get('n', 0)}")
     r2 = run_cloze(subject, corpus, lab, api_key, model, n_cloze, emb, som, rng, log)
     log(f"  빈칸 복원 시험: {r2.get('ok', 0)}/{r2.get('n', 0)}")
 
-    rep = {"subject": subject, "at": time.time(), "retrieval": r1, "cloze": r2,
+    rep = {"subject": subject, "at": time.time(), "retest": r0,
+           "retrieval": r1, "cloze": r2,
            "arms": arm_table(lab), "gaps": len(lab["gaps"])}
     lab["runs"].append(rep)
     save(subject, lab)
