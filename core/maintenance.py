@@ -29,7 +29,13 @@ SENT = re.compile(r"(?<=[.!?])\s+|(?<=다\.)\s*|(?<=요\.)\s*|(?<=음\.)\s*")
 
 def subject_list(subjects=None):
     if subjects in (None, "all"):
-        return paths.discover_subjects()
+        names = []
+        try:                       # 로컬에 아직 안 받은 과목도 포함 (서버 기준)
+            import cloud
+            names = cloud.list_local_names()
+        except Exception:
+            pass
+        return paths.discover_subjects(names)
     if isinstance(subjects, str):
         return [s.strip() for s in subjects.split(",") if s.strip()]
     return list(subjects)
