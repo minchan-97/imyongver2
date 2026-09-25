@@ -163,6 +163,7 @@ if cloud.enabled() and st.session_state.get("_synced_subject") != subject:
     st.session_state["_synced_subject"] = subject
     st.session_state["_sync_report"] = _rep
 
+st.sidebar.caption(f"버전 v{APP_VERSION}")
 st.sidebar.markdown("---")
 st.sidebar.write("**🩺 자기검증**")
 import selfcheck
@@ -472,7 +473,8 @@ with tabin:
     import inventory as inv
     with st.expander("📊 전체 현황 — 자료가 어디에 얼마나 있나", expanded=False):
         # 앱은 고른 과목만 동기화하므로, 전체를 세기 전에 모든 과목을 받아온다
-        if cloud.enabled() and not st.session_state.get("_inv_synced"):
+        if (cloud.enabled() and hasattr(inv, "sync_all")
+                and not st.session_state.get("_inv_synced")):
             with st.spinner("모든 과목 자료 받아오는 중…"):
                 _r = inv.sync_all()
             st.session_state["_inv_synced"] = True
@@ -659,7 +661,15 @@ with tabin:
         _okey_mt = api_key("OpenAI Key(영역 라벨용)", "OPENAI_API_KEY", "mt_key")
         _limit = st.number_input("라벨 한도(과목당 쪽)", 50, 2000, 300, 50, key="mt_lim")
         m1, m2 = st.columns(2)
+        st.caption("대상 과목은 서버 기준이에요. 실행하면 그 과목 파일을 먼저 받아온 뒤 정비해요.")
+
+        def _pull(subj):
+            if cloud.enabled():
+                cloud.sync(paths.all_paths(subj))
+
         if m1.button("🔍 미리보기", key="mt_dry"):
+            for _s in _pick:
+                _pull(_s)
             st.session_state["mt_rep"] = {
                 s: mt.run(s, tuple(_steps), True, _okey_mt or None,
                           cloud.cfg("OPENAI_TAG_MODEL") or "gpt-4o-mini", int(_limit))
@@ -669,6 +679,7 @@ with tabin:
             out = {}
             for i, s in enumerate(_pick):
                 bar.progress(i / max(len(_pick), 1), text=f"{s} 정비 중…")
+                _pull(s)
                 out[s] = mt.run(s, tuple(_steps), False, _okey_mt or None,
                                 cloud.cfg("OPENAI_TAG_MODEL") or "gpt-4o-mini",
                                 int(_limit))
