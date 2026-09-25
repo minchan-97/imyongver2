@@ -163,7 +163,7 @@ if cloud.enabled() and st.session_state.get("_synced_subject") != subject:
     st.session_state["_synced_subject"] = subject
     st.session_state["_sync_report"] = _rep
 
-st.sidebar.caption(f"버전 v{APP_VERSION}")
+st.sidebar.caption(f"버전 v{_ver.VERSION}")
 st.sidebar.markdown("---")
 st.sidebar.write("**🩺 자기검증**")
 import selfcheck
