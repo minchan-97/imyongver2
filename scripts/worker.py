@@ -164,8 +164,9 @@ if OPENAI:
         print(f"\n════ 스캔 대기열 {len(_pend)}건 (이번 회차 최대 "
               f"{os.environ.get('QUEUE_LIMIT', 20)}건) ════")
         _qlimit = int(os.environ.get("QUEUE_LIMIT", 20))
+        _ppj = int(os.environ.get("SCAN_PAGES_PER_JOB", 120))
         for r in iq.run_queue(OPENAI, os.environ.get("OPENAI_SCAN_MODEL"),
-                              limit=_qlimit):
+                              limit=_qlimit, max_pages=_ppj):
             print("  ", r)
 else:
     print("OPENAI_API_KEY 없음 — 스캔 대기열은 건너뜁니다")
