@@ -287,15 +287,28 @@ STEPS = ("seed", "fix_tags", "garbage", "dedupe", "exam_split", "exam_assign",
 APP_STEPS = ("seed", "fix_tags", "garbage", "dedupe", "exam_split", "split", "label")   # 재학습은 오래 걸려 워커에 맡김
 
 
+_SEED_DONE = {}
+
+
 def run(subject, steps=STEPS, dry_run=True, api_key=None, model="gpt-4o-mini",
-        label_limit=300, progress=None):
+        label_limit=300, progress=None, seed_once=True):
     rep = {"subject": subject, "dry_run": dry_run}
+    if seed_once and not dry_run:
+        # 같은 실행 안에서 seed를 과목마다 반복하지 않는다 (전체를 한 번만)
+        import time as _t
+        if _t.time() - _SEED_DONE.get("at", 0) < 120:
+            steps = tuple(s for s in steps if s != "seed")
+        else:
+            _SEED_DONE["at"] = _t.time()
     if "fix_tags" in steps:
         rep["fix_tags"] = fix_tags(subject, dry_run)
     if "seed" in steps:
         try:
             import seed_rules as sr
-            rows = sr.audit([subject])
+            # 파일명 규칙 재배치는 '이 과목 파일'만 봐서는 못 잡는다.
+            # (통합교과 기본이론이 총론 파일에 들어 있으면 총론을 검사해야 잡힘)
+            # 그래서 seed 단계만은 전체를 한 번에 훑는다.
+            rows = sr.audit(None)
             rep["seed"] = {"docs": len(rows), "pages": sum(r["pages"] for r in rows),
                            "to": dict(Counter(r["proposed"] for r in rows))}
             if rows and not dry_run:
