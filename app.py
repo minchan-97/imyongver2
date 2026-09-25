@@ -471,6 +471,17 @@ with tabin:
     # ── 전체 현황 ──────────────────────────────────────────────
     import inventory as inv
     with st.expander("📊 전체 현황 — 자료가 어디에 얼마나 있나", expanded=False):
+        # 앱은 고른 과목만 동기화하므로, 전체를 세기 전에 모든 과목을 받아온다
+        if cloud.enabled() and not st.session_state.get("_inv_synced"):
+            with st.spinner("모든 과목 자료 받아오는 중…"):
+                _r = inv.sync_all()
+            st.session_state["_inv_synced"] = True
+            if _r["받음"]:
+                st.caption(f"서버에서 {_r['받음']}개 파일 내려받음 "
+                           f"({', '.join(_r['과목'][:6])})")
+        if st.button("🔄 서버와 다시 맞추기", key="inv_resync"):
+            st.session_state.pop("_inv_synced", None)
+            st.rerun()
         _s = inv.summary()
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("과목", _s["과목수"])
