@@ -274,8 +274,11 @@ def label_areas(subject, api_key, model="gpt-4o-mini", limit=300, dry_run=True,
 
 
 # ── 전체 실행 ────────────────────────────────────────────────
-STEPS = ("fix_tags", "garbage", "dedupe", "exam_subject", "split", "label", "retrain")
-APP_STEPS = ("fix_tags", "garbage", "dedupe", "exam_subject", "split", "label")   # 재학습은 오래 걸려 워커에 맡김
+STEPS = ("seed", "fix_tags", "garbage", "dedupe", "exam_split", "exam_assign",
+         "split", "label", "retrain")
+# 기본값: 파일명 규칙 라우팅 → 정리 → 기출 문항 분리 → 긴 쪽 분할 → 라벨
+# (exam_assign = 기출 문항을 과목별로 배정, retrain = 재학습 — 둘 다 선택)
+APP_STEPS = ("seed", "fix_tags", "garbage", "dedupe", "exam_split", "split", "label")   # 재학습은 오래 걸려 워커에 맡김
 
 
 def run(subject, steps=STEPS, dry_run=True, api_key=None, model="gpt-4o-mini",
@@ -283,6 +286,22 @@ def run(subject, steps=STEPS, dry_run=True, api_key=None, model="gpt-4o-mini",
     rep = {"subject": subject, "dry_run": dry_run}
     if "fix_tags" in steps:
         rep["fix_tags"] = fix_tags(subject, dry_run)
+    if "seed" in steps:
+        try:
+            import seed_rules as sr
+            rows = sr.audit([subject])
+            rep["seed"] = {"docs": len(rows), "pages": sum(r["pages"] for r in rows),
+                           "to": dict(Counter(r["proposed"] for r in rows))}
+            if rows and not dry_run:
+                rep["seed"]["moved"] = sr.apply(rows)
+        except Exception as e:
+            rep["seed"] = {"error": str(e)}
+    if "exam_split" in steps and subject == "기출":
+        try:
+            import seed_rules as sr
+            rep["exam_split"] = sr.split_exam_bucket(dry_run=dry_run)
+        except Exception as e:
+            rep["exam_split"] = {"error": str(e)}
     if "fix_tags" in steps:
         ca = clean_areas(subject, dry_run)
         rep["clean_areas"] = len(ca)
@@ -291,17 +310,17 @@ def run(subject, steps=STEPS, dry_run=True, api_key=None, model="gpt-4o-mini",
         rep["garbage"] = {"n": len(g), "examples": g[:5]}
     if "dedupe" in steps:
         rep["dedupe"] = len(dedupe(subject, dry_run))
-    if "exam_subject" in steps:
+    if "exam_assign" in steps:
         try:
             import resubject as rsj
             pages = rsj.exam_pages([subject])
             rows = rsj.judge_exam_pages(pages, api_key, model)
-            rep["exam_subject"] = {"pages": len(pages), "moves": len(rows),
-                                   "to": dict(Counter(r["proposed"] for r in rows))}
+            rep["exam_assign"] = {"pages": len(pages), "moves": len(rows),
+                                  "to": dict(Counter(r["proposed"] for r in rows))}
             if rows and not dry_run:
-                rep["exam_subject"]["moved"] = rsj.apply_exam_moves(rows)
+                rep["exam_assign"]["moved"] = rsj.apply_exam_moves(rows)
         except Exception as e:
-            rep["exam_subject"] = {"error": str(e)}
+            rep["exam_assign"] = {"error": str(e)}
     if "split" in steps:
         rep["split"] = split(subject, dry_run)
     if "label" in steps and api_key:
