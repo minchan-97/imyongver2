@@ -171,6 +171,27 @@ if OPENAI:
 else:
     print("OPENAI_API_KEY 없음 — 스캔 대기열은 건너뜁니다")
 
+# ── 과목이 여럿이면 과목마다 별도 프로세스로 (메모리 초기화 + 한 과목이 죽어도 계속) ──
+if len(subjects) > 1 and not os.environ.get("WORKER_CHILD"):
+    import subprocess
+    env = dict(os.environ, WORKER_CHILD="1")
+    results = []
+    for s in subjects:
+        print(f"\n════════ {s} ════════", flush=True)
+        cmd = [sys.executable, os.path.abspath(__file__), "--subject", s,
+               "--maintain", a.maintain or "off", "--label-limit", str(a.label_limit)]
+        if a.fix:
+            cmd.append("--fix")
+        rc = subprocess.run(cmd, env=env).returncode
+        results.append((s, rc))
+        if rc != 0:
+            print(f"⚠️  {s}: 프로세스 종료 코드 {rc}"
+                  + (" (메모리 부족 가능성)" if rc in (133, 137, 139) else ""))
+    print("\n════ 전체 요약 ════")
+    for s, rc in results:
+        print(f"{s}: " + ("완료" if rc == 0 else f"중단(코드 {rc})"))
+    sys.exit(0 if all(rc == 0 for _, rc in results) else 1)
+
 summary = []
 for subject in subjects:
     print(f"\n════ {subject} ════")
@@ -180,6 +201,8 @@ for subject in subjects:
     try:
         r = run_one(subject, a.fix, MAINT, a.label_limit)
         summary.append((subject, len(r["alerts"]), bool(r.get("retrained"))))
+        import gc
+        gc.collect()
     except Exception as e:
         print(f"⚠️  {subject} 실패: {e}")
         summary.append((subject, -1, False))
