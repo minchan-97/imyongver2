@@ -468,6 +468,44 @@ with tabin:
     if st.session_state.get("in_summary"):
         st.success("저장 완료 · " + " · ".join(st.session_state.pop("in_summary")))
 
+    # ── 전체 현황 ──────────────────────────────────────────────
+    import inventory as inv
+    with st.expander("📊 전체 현황 — 자료가 어디에 얼마나 있나", expanded=False):
+        _s = inv.summary()
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("과목", _s["과목수"])
+        c2.metric("자료", _s["총자료"])
+        c3.metric("기출", _s["총기출"])
+        c4.metric("문서", _s["문서수"])
+        st.caption(f"총 {_s['총글자']:,}자")
+
+        st.write("**과목별**")
+        st.dataframe(inv.subjects(), use_container_width=True, hide_index=True)
+        st.caption("임베딩·SOM이 비어 있으면 그 과목은 자료집·자가시험이 안 돌아요 "
+                   "(워커가 재학습하면 채워집니다).")
+
+        st.write("**출처(문서)별** — 한 문서가 여러 과목에 흩어졌는지 보여요")
+        st.dataframe(inv.sources(), use_container_width=True, hide_index=True)
+
+        _q = inv.queue()
+        st.write(f"**스캔 대기열** — 대기 {_q['대기']} · 완료 {_q['완료']} · 실패 {_q['실패']}")
+        if _q["실패목록"]:
+            st.error("들어가지 못한 파일")
+            st.dataframe(_q["실패목록"], use_container_width=True, hide_index=True)
+        if _q["최근"]:
+            st.caption("최근 처리")
+            st.dataframe(_q["최근"], use_container_width=True, hide_index=True)
+
+        if cloud.enabled():
+            _f = inv.files()
+            if _f:
+                _miss = [r for r in _f if not r["들어간 쪽"]]
+                st.write(f"**원본 파일 대조** — 보관 {len(_f)}개 중 "
+                         f"아직 안 들어간 것 {len(_miss)}개")
+                st.dataframe(_f, use_container_width=True, hide_index=True)
+                if _miss:
+                    st.caption("⚠️ 표시된 파일은 위 '워커에게 스캔 맡기기'로 다시 걸면 돼요.")
+
     # ── 과목 재분류 (사후 자기검증) ────────────────────────────
     import resubject as rsj
     with st.expander("🧭 과목 재분류 · 태그 채우기 — 잘못 들어간 자료 정리"):
