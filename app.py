@@ -661,7 +661,8 @@ with tabin:
         _okey_mt = api_key("OpenAI Key(영역 라벨용)", "OPENAI_API_KEY", "mt_key")
         _limit = st.number_input("라벨 한도(과목당 쪽)", 50, 2000, 300, 50, key="mt_lim")
         m1, m2 = st.columns(2)
-        st.caption("대상 과목은 서버 기준이에요. 실행하면 그 과목 파일을 먼저 받아온 뒤 정비해요.")
+        st.caption("대상 과목은 서버 기준이에요. 실행하면 그 과목 파일을 먼저 받아온 뒤 정비해요. "
+                   "파일명 규칙 재배치(seed)는 과목과 무관하게 전체를 한 번 훑어요.")
 
         def _pull(subj):
             if cloud.enabled():
