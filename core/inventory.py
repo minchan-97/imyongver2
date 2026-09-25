@@ -24,6 +24,30 @@ def _stats(recs):
             "코드있음": sum(1 for r in recs if r.code)}
 
 
+def sync_all(log=None):
+    """
+    전체 현황을 보기 전에 모든 과목 파일을 서버에서 받아온다.
+    (앱은 고른 과목만 동기화하므로, 안 들어가 본 과목은 로컬에 파일이 없어
+     '자료 0'으로 보인다 — 실제로는 서버에 있다)
+    """
+    try:
+        import cloud
+    except Exception:
+        return {"받음": 0, "과목": []}
+    if not cloud.enabled():
+        return {"받음": 0, "과목": []}
+    got, subs = 0, []
+    names = cloud.list_local_names()
+    for s in paths.discover_subjects(names):
+        rep = cloud.sync(paths.all_paths(s))
+        if rep["down"]:
+            got += len(rep["down"])
+            subs.append(s)
+        if log:
+            log(s)
+    return {"받음": got, "과목": subs}
+
+
 def subjects(include_empty=False):
     rows = []
     for s in sorted(SUBJECTS - {"공통"}):
