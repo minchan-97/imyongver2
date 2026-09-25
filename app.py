@@ -507,7 +507,8 @@ with tabin:
                          f"아직 안 들어간 것 {len(_miss)}개")
                 st.dataframe(_f, use_container_width=True, hide_index=True)
                 if _miss:
-                    st.caption("⚠️ 표시된 파일은 위 '워커에게 스캔 맡기기'로 다시 걸면 돼요.")
+                    st.caption("⚠️ 표시된 파일만 아직 안 들어왔어요. "
+                               "'저장된 출처'가 비어 있으면 대기열에 건 적이 없는 거예요.")
 
     # ── 과목 재분류 (사후 자기검증) ────────────────────────────
     import resubject as rsj
