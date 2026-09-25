@@ -68,7 +68,10 @@ def classify(name: str) -> dict:
                   "파일명에 2차 시험 키워드")
 
     # 2) 기출 시험지 — 과목으로 쪼개지 않고 한 덩어리
-    if EXAM.search(stem):
+    #    단 '○○ 기본이론/각론/마인드맵'처럼 교재 성격이 분명하면 교재로 본다
+    #    ('국어 기본이론 마인드맵'이 기출로 가던 문제)
+    if EXAM.search(stem) and not (subj and (MIND.search(stem) or BASIC.search(stem)
+                                            or GAERON.search(stem))):
         return _r("기출", "기출", "L1_pattern", None, year, "초등", 1.0,
                   "파일명에 기출/선정경쟁시험")
 
@@ -92,7 +95,7 @@ def classify(name: str) -> dict:
         return _r(subj, subj, "L2_corpus", dt, None, None, 1.0,
                   f"파일명에 '{subj}' + {why}")
 
-    # 4) 총론·전 과목
+    # 4) 총론·전 과목 (교과명이 있으면 위에서 이미 걸렸다)
     if CHONGRON.search(stem):
         return _r("공통", "공통", "L2_corpus", "교육과정_총론", None, None, 0.9,
                   "총론/전 과목")
