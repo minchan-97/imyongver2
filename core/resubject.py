@@ -300,6 +300,12 @@ def undetermined_docs(subject_list=None, max_conf=0.6, layers=("L2_corpus", "L1_
                 prop, conf, ev, _ = docs.get(b, (None, 0.0, [], 0))
                 if all((rec.doc_type in ("내_답변", "웹수집")) for rec in rs):
                     continue          # 내가 답한 것·웹에서 채택한 것은 분류 대상 아님
+                try:                  # 파일명 규칙으로 판정되는 문서는 LLM에 묻지 않는다
+                    import seed_rules as _sr
+                    if _sr.classify(b)["confidence"] >= 0.9:
+                        continue
+                except Exception:
+                    pass
                 tagged = sum(1 for rec in rs if rec.area and rec.doc_type)
                 if skip_tagged and tagged >= max(1, int(len(rs) * 0.8)):
                     continue          # 이미 사람이 확인해 태그가 채워진 문서는 다시 안 묻는다
@@ -519,3 +525,4 @@ def apply_exam_moves(rows):
                     moved += 1
             save_records_pkl(cur, tgt)
     return moved
+
