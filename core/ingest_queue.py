@@ -84,22 +84,36 @@ def _fetch(job):
     raise ValueError("원본 위치(storage_path/drive_file)가 없어요")
 
 
-def process(job, api_key, model=None, concept_names=None, log=print):
-    """한 건 처리: 내려받기 → 스캔 → 분류 → 저장."""
+def process(job, api_key, model=None, concept_names=None, log=print,
+            max_pages=None):
+    """
+    한 건 처리: 내려받기 → 스캔 → 분류 → 저장.
+    큰 파일(수백 쪽)은 한 번에 다 하지 않고 max_pages씩 끊어서 한다.
+    남으면 그 자리(next_page)를 job에 적어두고 대기열에 남긴다 → 다음 회차에 이어감.
+    (한 방에 처리하다 메모리로 죽으면 로그도 결과도 안 남는다)
+    """
     from page_scan import build_pages, scan_pages, ScanCache
     from schema import Record, load_records_pkl, save_records_pkl
     import auto_tag
 
+    import time as _t
+    t0 = _t.time()
     name, raw = _fetch(job)
     if not raw:
-        raise RuntimeError("원본을 못 받았어요")
-    pages = build_pages([(name, raw)])
+        raise RuntimeError("원본을 못 받았어요 (보관 경로 확인)")
+    log(f"    내려받음 {len(raw) // 1024}KB ({_t.time() - t0:.0f}초)")
+    all_pages = build_pages([(name, raw)])
+    start = int(job.get("next_page") or 0)
+    limit = int(max_pages or 0)
+    pages = all_pages[start:start + limit] if limit else all_pages[start:]
+    if start or (limit and len(all_pages) > start + limit):
+        log(f"    전체 {len(all_pages)}쪽 중 {start + 1}~{start + len(pages)}쪽 처리")
     res = scan_pages(pages, api_key, concept_names or [],
                      cache=ScanCache(paths.scan_cache_path()),
                      handwriting=bool(job.get("handwriting")), model=model,
                      progress=lambda d, n: log(f"    스캔 {d}/{n}쪽"))
     for r in res:
-        r["page_in_file"] = r["page"]
+        r["page_in_file"] = r["page"] + start
 
     subject = job.get("subject")
     doc_type = job.get("doc_type")
@@ -130,7 +144,7 @@ def process(job, api_key, model=None, concept_names=None, log=print):
     path = paths.l1_path(subject) if is_exam else paths.l2_path(subject)
     existing = load_records_pkl(path)
     src = job["source"]
-    if job.get("replace"):                           # 같은 출처의 옛 기록 치우기
+    if job.get("replace") and not start:              # 이어 하는 중이면 지우지 않는다
         before = len(existing)
         existing = [r for r in existing
                     if not (r.source == src or r.source.startswith(src + " p."))]
@@ -160,12 +174,15 @@ def process(job, api_key, model=None, concept_names=None, log=print):
             have.add(rec.rec_id)
             added += 1
     save_records_pkl(existing, path)
+    done_to = start + len(pages)
+    more = done_to < len(all_pages)
     return {"pages": len(res), "added": added, "skipped": skipped,
             "subject": subject, "path": os.path.basename(path),
-            "auto_tag": job.get("auto_tag")}
+            "auto_tag": job.get("auto_tag"), "next_page": done_to if more else None,
+            "total_pages": len(all_pages), "sec": int(_t.time() - t0)}
 
 
-def run_queue(api_key, model=None, limit=20, log=print):
+def run_queue(api_key, model=None, limit=20, log=print, max_pages=None):
     """대기열 전체 처리. 반환: 처리 결과 목록."""
     q = load()
     todo = pending(q)[:limit]
@@ -173,9 +190,18 @@ def run_queue(api_key, model=None, limit=20, log=print):
     for job in todo:
         log(f"  · {job['source']} ({job['kind']})")
         try:
-            r = _wipe(job, log) if job["kind"] == "wipe" else \
-                process(job, api_key, model, log=log)
-            set_status(q, job["id"], "done", r)
+            r = (_wipe(job, log) if job["kind"] == "wipe"
+                 else process(job, api_key, model, log=log, max_pages=max_pages))
+            if r.get("next_page"):            # 아직 남음 → 대기열에 그대로 두고 이어감
+                for j in q["jobs"]:
+                    if j["id"] == job["id"]:
+                        j["next_page"] = r["next_page"]
+                        j["result"] = r
+                save(q)
+                log(f"    → {r['added']}쪽 저장 · {r['next_page']}/{r['total_pages']}쪽까지 "
+                    f"({r['sec']}초) — 나머지는 다음 회차")
+            else:
+                set_status(q, job["id"], "done", r)
             out.append({"source": job["source"], **r})
             log(f"    → {r['added']}쪽 저장 ({r['path']})" if "added" in r
                 else f"    → {r.get('wiped', 0)}쪽 비움")
