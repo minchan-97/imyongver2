@@ -7,7 +7,7 @@ version.py — 버전과 '이 버전이 필요로 하는 함수' 목록.
 
 새 기능을 만들면 그 함수 이름을 여기에 추가할 것.
 """
-VERSION = "16.2"
+VERSION = "17.0"
 
 REQUIRES = {
     "cloud": ["sync", "push", "list_uploads", "download_upload", "list_local_names",
@@ -25,6 +25,7 @@ REQUIRES = {
     "selfcheck": ["run", "retrain", "auto_epochs", "load_history", "train_corpus",
                   "auto_grid", "corpus_sig"],
     "progress": ["health", "exam", "answers", "trend", "headline", "overview"],
+    "anchor_tagger": ["fit", "load", "explain", "ANCHORS", "anchor_of"],
     "daily_digest": ["build", "mark_read", "recent", "today_str", "load_store"],
     "trend_lab": ["stats", "predict", "backtest", "summary", "load_lab", "top_rules"],
     "labeler": ["label_records", "train_tagger", "tag", "clean_area"],
@@ -53,3 +54,4 @@ def check():
         except Exception as e:
             out.append(f"core/{mod}.py — 불러오기 실패: {e}")
     return out
+
