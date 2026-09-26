@@ -127,7 +127,9 @@ def audit(subject_list=None, min_conf=0.6, by_source=True,
     by_source=True(기본): 문서 단위로 판정하고, 그 문서의 모든 쪽을 함께 옮긴다.
     반환 행: {path, layer, current, proposed, conf, evidence, source, pages, rec_ids, text}
     """
-    subject_list = subject_list or sorted(SUBJECTS - {"공통"})
+    # 기출 바구니는 전 과목이 섞인 게 정상 → 문서 단위 이동 대상에서 뺀다
+    subject_list = [s for s in (subject_list or sorted(SUBJECTS - {"공통"}))
+                    if s != "기출"]
     out = []
     for subj in subject_list:
         for path, layer in ((paths.l2_path(subj), "L2_corpus"),
@@ -525,4 +527,3 @@ def apply_exam_moves(rows):
                     moved += 1
             save_records_pkl(cur, tgt)
     return moved
-
