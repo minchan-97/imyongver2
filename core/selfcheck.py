@@ -120,8 +120,14 @@ def check_model(subject, l2, prev=None):
         hits = Counter(bmus)
         dead = 1.0 - len(hits) / n_nodes
         top_share = max(hits.values()) / len(bmus)
-    prev_qe = (prev or {}).get("model", {}).get("qe")
-    worsen = (qe - prev_qe) / prev_qe if (qe and prev_qe) else 0.0
+    prev_model = (prev or {}).get("model", {}) or {}
+    prev_qe = prev_model.get("qe")
+    prev_grid = prev_model.get("grid")
+    # 격자가 바뀌면(자료 수에 맞춰 재조정) 오차 절대값이 달라지므로 비교하지 않는다.
+    # 오차가 거의 0이거나 자료가 적을 때도 비율 비교는 무의미하다(+51276351% 같은 값이 나옴).
+    same_grid = (prev_grid is None) or (list(prev_grid) == [som.gh, som.gw])
+    comparable = (same_grid and prev_qe and prev_qe > 1e-4 and len(l2) >= 20)
+    worsen = (qe - prev_qe) / prev_qe if (comparable and qe) else 0.0
     reasons = []
     if coverage < TH["coverage"]:
         reasons.append(f"새 자료 벡터화 성공률 {coverage:.0%} (< {TH['coverage']:.0%})")
