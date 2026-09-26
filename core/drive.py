@@ -19,7 +19,6 @@ secrets에 폴더 링크만 넣어두면, 앱이 그 폴더(하위 폴더 포함
 가져온 파일은 (파일ID, 수정시각)으로 기록해 두어 다음엔 건너뛴다.
 """
 from __future__ import annotations
-CORE_VERSION = "13.3"
 import os, re, io, json, pickle, time
 
 API = "https://www.googleapis.com/drive/v3/files"
@@ -184,12 +183,18 @@ def list_folder(fid, api_key=None, sa_json=None, recursive=True, _prefix="", _de
 
 
 def dedupe(files):
-    """여러 폴더를 합칠 때 같은 파일이 두 번 들어가지 않게."""
-    seen, out = set(), []
+    """
+    여러 폴더를 합칠 때 같은 파일이 두 번 들어가지 않게.
+    파일 ID뿐 아니라 (이름, 크기)로도 걸러낸다 — 같은 자료를 폴더 두 곳에 둔 경우
+    ID가 달라서 두 번 스캔되고 비용이 두 배로 든다.
+    """
+    seen_id, seen_name, out = set(), set(), []
     for f in files:
-        if f["id"] in seen:
+        key = (f.get("name"), f.get("size") or 0)
+        if f["id"] in seen_id or key in seen_name:
             continue
-        seen.add(f["id"])
+        seen_id.add(f["id"])
+        seen_name.add(key)
         out.append(f)
     return out
 
