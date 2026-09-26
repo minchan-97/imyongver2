@@ -7,7 +7,7 @@ version.py — 버전과 '이 버전이 필요로 하는 함수' 목록.
 
 새 기능을 만들면 그 함수 이름을 여기에 추가할 것.
 """
-VERSION = "17.0"
+VERSION = "17.1"
 
 REQUIRES = {
     "cloud": ["sync", "push", "list_uploads", "download_upload", "list_local_names",
@@ -54,4 +54,3 @@ def check():
         except Exception as e:
             out.append(f"core/{mod}.py — 불러오기 실패: {e}")
     return out
-
