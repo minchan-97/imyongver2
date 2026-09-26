@@ -54,8 +54,9 @@ def exam(subject, n=30):
                      "근거검색": rt.get("rate"),
                      "검색시행": rt.get("n"),
                      "빈칸복원": cz.get("rate"),
-                     "구멍": r.get("gaps"),
-                     "메움": len((r.get("retest") or {}).get("fixed") or [])})
+                     "열린구멍": r.get("gaps_open", r.get("gaps")),
+                     "메운구멍": r.get("gaps_fixed", 0),
+                     "이번회차메움": len((r.get("retest") or {}).get("fixed") or [])})
     arms = []
     try:
         arms = se.arm_table(lab)
@@ -75,7 +76,8 @@ def answers(subject):
     for a in (box.get("answers") or [])[-20:]:
         rows.append({"시각": _t(a.get("at")), "종류": a.get("kind"),
                      "항목": str(a.get("key"))[:24],
-                     "도움": {True: "○", False: "×", None: "확인중"}.get(a.get("helped"))})
+                     "도움": {True: "○", False: "×", None: "확인중",
+                              "해당없음": "—"}.get(a.get("helped"), "—")})
     return s, rows
 
 
