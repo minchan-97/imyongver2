@@ -1495,8 +1495,8 @@ with tablab:
     _lab = tl.load_lab(subject)
     _years = sorted({r.year for r in l1 if r.year})
 
-    lt1, lt2, lt3, lt4 = st.tabs(["📊 통계", "🔮 예측·백테스트", "🏷️ 라벨 → 로컬 태거",
-                                  "🧠 자가 학습"])
+    lt1, lt2, lt3, lt4, lt5 = st.tabs(["📊 통계", "🔮 예측·백테스트", "🏷️ 라벨 → 로컬 태거",
+                                       "🧠 자가 학습", "🧭 앵커 태거"])
 
     with lt1:
         if not _years:
@@ -1723,6 +1723,68 @@ with tablab:
             st.write("**출처 성적** (채택한 자료가 실제로 구멍을 메웠는지)")
             st.dataframe([{**r, "도움률": (f"{r['도움률']:.0%}" if r["도움률"] is not None else "—")}
                           for r in _dt[:10]], use_container_width=True, hide_index=True)
+
+
+
+    with lt5:
+        import anchor_tagger as ankt
+        st.caption("은닉층에 **출처 앵커**를 심은 태거예요. 은닉 뉴런 일부를 "
+                   "교육과정·지도서·기출·내답변·웹수집·개인필기 축으로 고정해서, "
+                   "'이 판단이 어느 출처에서 나왔는지'가 층 안에 남아요. "
+                   "판단을 자료에 묶는 원칙이 화면 표시가 아니라 구조가 되는 거예요.")
+        _recs = (load_records_pkl(paths.l2_path(subject))
+                 + load_records_pkl(paths.l1_path(subject)))
+        import labeler as _lb
+        _nlab = len([r for r in _recs if r.rec_id in _lb.load_labels(subject)])
+        st.caption(f"라벨 있는 자료 {_nlab}건 · 40건 이상 권장 (많을수록 은닉층이 안정돼요)")
+        ac1, ac2 = st.columns(2)
+        _aw = ac1.slider("앵커 강도", 0.0, 3.0, 1.0, 0.25, key="ank_w",
+                         help="0이면 평범한 2층 신경망. 높일수록 출처 축을 강하게 고정해요")
+        _ep = ac2.select_slider("학습 반복", [400, 800, 1500, 3000], value=1500, key="ank_ep")
+        if st.button("🧭 앵커 태거 학습", type="primary", key="ank_fit"):
+            try:
+                with st.spinner("학습 중…"):
+                    st.session_state["ank_rep"] = ankt.fit(
+                        subject, _recs, anchor_w=_aw, epochs=int(_ep))
+            except Exception as e:
+                st.error(f"학습 실패: {e}")
+        _rep = st.session_state.get("ank_rep") or (
+            {k: v for k, v in (ankt.load(subject) or {}).items() if k != "params"})
+        if _rep:
+            m1, m2, m3 = st.columns(3)
+            m1.metric("앵커 태거", f"{_rep['acc']:.0%}")
+            m2.metric("앵커 없는 같은 크기",
+                      f"{_rep['base_acc']:.0%}" if _rep.get("base_acc") is not None else "—")
+            m3.metric("기준선", f"{_rep['baseline']:.0%}")
+            st.caption("기준선 = 가장 흔한 라벨로 전부 찍기. 앵커가 정확도를 얼마나 "
+                       "내주고 해석 가능성을 얻었는지 보세요.")
+            if _rep.get("axis"):
+                st.write("**앵커 축이 섰는지** (자기 활성 > 남의 활성이어야 정상)")
+                st.dataframe([{"앵커": a2, "자기 활성": v["자기활성"],
+                               "남의 활성": v["남의활성"], "표본": v["표본"]}
+                              for a2, v in _rep["axis"].items()],
+                             use_container_width=True, hide_index=True)
+            st.markdown("---")
+            _q = st.text_area("판단해볼 문장", key="ank_try", height=100,
+                              placeholder="자료의 한 대목을 붙여넣어 보세요")
+            if _q.strip():
+                _r = ankt.explain(subject, _q)
+                if not _r:
+                    st.warning("임베딩에 없는 낱말뿐이라 판단할 수 없어요")
+                else:
+                    st.write(f"**판단: {_r['label']}** ({_r['prob']:.0%}) · "
+                             f"출처 신뢰도 {_r['trust']:.2f}")
+                    st.caption("출처 기여도 — 이 판단이 어느 성격의 자료에서 나왔나")
+                    st.bar_chart({k: v for k, v in _r["anchors"].items() if v > 0})
+                    st.caption("절제 검사 — 그 앵커를 끄면 판단이 얼마나 흔들리나 "
+                               "(0이면 실제로 안 쓴 출처)")
+                    st.dataframe([{"앵커": k, "영향": v} for k, v in
+                                  sorted(_r["ablation"].items(), key=lambda x: -x[1])],
+                                 use_container_width=True, hide_index=True)
+                    if _r["warning"]:
+                        st.warning(_r["warning"])
+        st.caption("정직한 범위: 앵커는 '이 판단이 어느 출처 성격의 자료와 닮았나'를 봐요. "
+                   "특정 파일에서 인용했다는 증명은 아니고, 그건 근거 검색이 따로 합니다.")
 
 
 # ══════════════════════════════════════════════════════════════
