@@ -267,6 +267,19 @@ def _mark_gap(lab, rec, why):
     g["last"] = time.time()
 
 
+def prune_gaps(lab, keep=200):
+    """메워진 지 오래된 구멍은 정리한다 (목록이 끝없이 커지지 않게)."""
+    gaps = lab.get("gaps") or {}
+    if len(gaps) <= keep:
+        return 0
+    items = sorted(gaps.items(),
+                   key=lambda kv: (not kv[1].get("fixed"), kv[1].get("last", 0)))
+    drop = [k for k, _ in items[:len(gaps) - keep]]
+    for k in drop:
+        gaps.pop(k, None)
+    return len(drop)
+
+
 def top_gaps(lab, n=10, only_unsearched=False):
     gs = [g for g in lab["gaps"].values()
           if not g.get("fixed") and (not only_unsearched or not g.get("searched"))]
@@ -300,11 +313,11 @@ def retest_gaps(subject, corpus, lab, emb=None, som=None, log=print):
     for key, g in list(lab["gaps"].items()):
         if g.get("fixed"):
             continue
-        # '새로 들어온 자료'(내 답변·웹수집)가 이 구멍을 겨냥할 때만 다시 푼다.
-        # 원래 있던 자료로 우연히 검색되는 것은 메움으로 치지 않는다.
+        # 열린 구멍은 모두 다시 풀어본다. 자료가 늘어서 저절로 메워진 것도 닫아야
+        # 구멍 목록이 무한정 쌓이지 않는다.
+        # 다만 '누구 덕분인지'(credit)는 내 답변·웹수집이 있을 때만 준다.
         targets = [r for r in corpus if _fills_gap(r, key)]
-        if not any(r.doc_type in ("내_답변", "웹수집") for r in targets):
-            continue
+        by_new = any(r.doc_type in ("내_답변", "웹수집") for r in targets)
         checked += 1
         sample = (g.get("sample") or key)
         probe = Record(text=sample if len(sample) > 15 else f"{key} {sample}",
@@ -318,9 +331,11 @@ def retest_gaps(subject, corpus, lab, emb=None, som=None, log=print):
         if found:
             g["fixed"] = True
             g["fixed_at"] = time.time()
+            g["fixed_by"] = "새 자료" if by_new else "기존 자료"
             fixed.append(key)
-            _credit(subject, key)
-            log(f"    구멍 메움: {key}")
+            if by_new:
+                _credit(subject, key)
+            log(f"    구멍 메움: {key} ({g['fixed_by']})")
     return {"checked": checked, "fixed": fixed}
 
 
@@ -342,7 +357,7 @@ def run(subject, api_key=None, model="gpt-4o-mini", n_retrieval=30, n_cloze=8,
 
     r0 = retest_gaps(subject, corpus, lab, emb, som, log)
     if r0["fixed"]:
-        log(f"  답변·수집으로 메운 구멍 {len(r0['fixed'])}곳")
+        log(f"  다시 풀어보니 메워진 구멍 {len(r0['fixed'])}곳")
     r1 = run_retrieval(subject, corpus, lab, n_retrieval, emb, som, rng, log)
     log(f"  근거 검색 시험: {r1.get('ok', 0)}/{r1.get('n', 0)}")
     r2 = run_cloze(subject, corpus, lab, api_key, model, n_cloze, emb, som, rng, log)
@@ -351,7 +366,9 @@ def run(subject, api_key=None, model="gpt-4o-mini", n_retrieval=30, n_cloze=8,
     rep = {"subject": subject, "at": time.time(), "retest": r0,
            "retrieval": r1, "cloze": r2,
            "arms": arm_table(lab), "gaps": len(lab["gaps"])}
+    rep["gaps_open"] = sum(1 for g in lab["gaps"].values() if not g.get("fixed"))
+    rep["gaps_fixed"] = sum(1 for g in lab["gaps"].values() if g.get("fixed"))
+    prune_gaps(lab)
     lab["runs"].append(rep)
     save(subject, lab)
     return rep
-
