@@ -229,7 +229,9 @@ def answer(subject, qid, text, keep_as_material=True):
     box["answers"].append({"qid": qid, "kind": q["kind"], "key": q["key"],
                            "question": q["question"], "answer": text,
                            "rec_id": rec_id, "gap_key": q.get("gap_key"),
-                           "helped": None, "at": time.time()})
+                           # 구멍과 연결된 질문만 '도움 됐는지'를 판정할 수 있다
+                           "helped": None if q.get("gap_key") else "해당없음",
+                           "at": time.time()})
     save(subject, box)
     return True
 
@@ -259,7 +261,7 @@ def mark_helped(subject, gap_key, helped=True):
 def summary(subject):
     box = load(subject)
     ans = box["answers"]
-    helped = [a for a in ans if a.get("helped")]
+    helped = [a for a in ans if a.get("helped") is True]
     return {"open": len([q for q in box["questions"] if q["status"] == "open"]),
             "answered": len(ans), "helped": len(helped),
             "by_kind": dict(Counter(q["kind"] for q in box["questions"]))}
