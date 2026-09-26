@@ -328,8 +328,9 @@ emb, som = load_engine(subject, _mtime(paths.emb_path(subject)), _mtime(paths.so
 
 st.title(f"📖 임용 4레이어 — {subject}")
 
-tabday, tabin, tab2, tab1, tablab, tab3, tab4, tab5, tabp, tabc = st.tabs(
-    ["📖 오늘의 자료집", "📥 한 번에 넣기", "📚 자료·학습 (L2)", "📈 기출 패턴 (L1)",
+(tabday, tabin, tabgrow, tab2, tab1, tablab, tab3, tab4, tab5, tabp,
+ tabc) = st.tabs(
+    ["📖 오늘의 자료집", "📥 한 번에 넣기", "📈 성장 기록", "📚 자료·학습 (L2)", "📈 기출 패턴 (L1)",
      "🧪 경향 랩",
      "🔎 트렌드 (L3)",
      "📝 문제 풀기 (L4)", "🎯 수능형 연습 (L5)", "📜 지문 학습", "🕸️ 개념 지도"])
@@ -1078,6 +1079,77 @@ with tabin:
                     st.session_state["in_summary"] = summary
                     st.session_state.pop(skey, None)
                     st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════
+# 탭 — 성장 기록
+# ══════════════════════════════════════════════════════════════
+with tabgrow:
+    import progress as pg
+    st.subheader(f"성장 기록 · {subject}")
+    st.caption("회차마다 쌓인 기록을 시간순으로 봅니다. "
+               "마지막 값 하나가 아니라 '어떻게 변해왔는지'를 봐야 좋아지는지 알 수 있어요.")
+
+    _head = pg.headline(subject)
+    if _head:
+        for _line in _head:
+            st.write("• " + _line)
+    else:
+        st.info("아직 회차가 쌓이지 않았어요. 워커가 몇 번 돌면 채워져요.")
+
+    _h = pg.health(subject)
+    if len(_h) >= 2:
+        st.write("**자료와 지도**")
+        import pandas as pd
+        _df = pd.DataFrame(_h).set_index("시각")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.caption("자료 건수")
+            st.line_chart(_df[["자료"]])
+        with c2:
+            st.caption("빈 노드 비율 (낮을수록 지도가 촘촘)")
+            st.line_chart(_df[["빈노드"]])
+        c3, c4 = st.columns(2)
+        with c3:
+            st.caption("양자화 오차 (낮을수록 좋음)")
+            st.line_chart(_df[["양자화오차"]])
+        with c4:
+            st.caption("경고 수")
+            st.line_chart(_df[["경고"]])
+        with st.expander("표로 보기"):
+            st.dataframe(_h, use_container_width=True, hide_index=True)
+
+    _runs, _arms = pg.exam(subject)
+    if _runs:
+        st.write("**자가 시험**")
+        import pandas as pd
+        _rdf = pd.DataFrame(_runs).set_index("시각")
+        cols = [c for c in ("근거검색", "빈칸복원") if _rdf[c].notna().any()]
+        if cols:
+            st.line_chart(_rdf[cols])
+        st.caption("구멍이 생기고 메워진 추이")
+        st.line_chart(_rdf[["구멍", "메움"]])
+    if _arms:
+        st.write("**전략 성적** (자료가 바뀌면 순위도 바뀝니다)")
+        st.dataframe([{"전략": a["전략"], "시행": a["시행"],
+                       "성공률": (f"{a['성공률']:.0%}" if a["성공률"] is not None else "—")}
+                      for a in _arms], use_container_width=True, hide_index=True)
+
+    _asum, _arows = pg.answers(subject)
+    if _asum.get("answered"):
+        st.write(f"**내 답변** {_asum['answered']}개 · 구멍을 메운 것 {_asum.get('helped', 0)}개")
+        if _arows:
+            st.dataframe(_arows, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.write("**전 과목 한눈에**")
+    _ov = pg.overview()
+    if _ov:
+        st.dataframe([{**r,
+                       "빈노드": (f"{r['빈노드']:.0%}" if r["빈노드"] is not None else "—"),
+                       "근거검색": (f"{r['근거검색']:.0%}" if r["근거검색"] is not None else "—")}
+                      for r in _ov], use_container_width=True, hide_index=True)
+        st.caption("회차 = 자기검증이 돈 횟수. 과목을 바꾸면 그 과목의 자세한 추이를 볼 수 있어요.")
 
 
 # ══════════════════════════════════════════════════════════════
