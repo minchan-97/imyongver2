@@ -37,7 +37,9 @@ try:
 except Exception:
     def _cloud_push(path, **kw): return False
 
-ARMS = ["code", "node", "keyword", "embed"]
+# embed  = 낱말 벡터 단순 평균
+# embed_w= 흔한 낱말을 누른 가중 평균 (어느 쪽이 나은지는 성적이 정한다)
+ARMS = ["code", "node", "keyword", "embed", "embed_w"]
 STOP = set("국어 학생 교사 지도 내용 활동 수업 학습 방법 경우 위해 대해 자료 단원 "
            "차시 교육 평가 성취 기준 있다 하는 것이 NUM".split())
 
@@ -117,13 +119,14 @@ def retrieve(arm, query_rec, corpus, emb=None, som=None, k=5):
         ids = set(som.node_rec_ids.get(node, []))
         hit = [r for r in pool if r.rec_id in ids]
         return hit[:k]
-    if arm == "embed" and emb is not None:
-        v = emb.embed_tokens(tokenize(query_rec.text))
+    if arm in ("embed", "embed_w") and emb is not None:
+        wt = (arm == "embed_w")
+        v = emb.embed_tokens(tokenize(query_rec.text), weighted=wt)
         if v is None:
             return []
         scored = []
         for r in pool:
-            w = emb.embed_tokens(tokenize(r.text))
+            w = emb.embed_tokens(tokenize(r.text), weighted=wt)
             if w is not None:
                 scored.append((float(v @ w), r))
         scored.sort(key=lambda x: -x[0])
@@ -376,3 +379,4 @@ def run(subject, api_key=None, model="gpt-4o-mini", n_retrieval=30, n_cloze=8,
     lab["runs"].append(rep)
     save(subject, lab)
     return rep
+
