@@ -225,7 +225,11 @@ def run_cloze(subject, corpus, lab, api_key, model="gpt-4o-mini", n=10,
             ans = str(d.get("answer", ""))
             quote = str(d.get("quote", ""))
         except Exception as e:
-            log(f"    cloze 실패: {e}")
+            msg = str(e)
+            if "rate_limit" in msg or "429" in msg:
+                log("    속도 제한 — 빈칸 시험을 여기서 멈춥니다")
+                break                      # 같은 오류로 로그를 도배하지 않는다
+            log(f"    cloze 실패: {msg[:120]}")
             continue
         ok = _norm(ans) == _norm(term) or (_norm(term) in _norm(ans) and len(term) >= 2)
         # 근거 인용이 실제 자료에 있는지도 함께 본다(지어낸 인용 걸러내기)
