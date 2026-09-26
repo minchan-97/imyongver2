@@ -119,7 +119,9 @@ def audit(subject_list=None):
     """저장된 기록의 출처(파일명)를 규칙으로 다시 판정 → 옮길 것만."""
     import paths
     from schema import SUBJECTS, load_records_pkl
-    subject_list = subject_list or sorted(SUBJECTS)
+    # 기출 바구니는 원래 전 과목이 섞여 있다. 문서 단위로 한 과목에 몰아넣으면 안 된다.
+    # (문항 단위 배정은 exam_assign 단계가 따로 한다)
+    subject_list = [s for s in (subject_list or sorted(SUBJECTS)) if s != "기출"]
     rows = {}
     for s in subject_list:
         for path, layer in ((paths.l2_path(s), "L2_corpus"),
