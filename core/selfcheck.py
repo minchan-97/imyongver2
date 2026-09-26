@@ -125,8 +125,10 @@ def check_model(subject, l2, prev=None):
     reasons = []
     if coverage < TH["coverage"]:
         reasons.append(f"새 자료 벡터화 성공률 {coverage:.0%} (< {TH['coverage']:.0%})")
-    if dead is not None and dead > TH["dead_nodes"]:
-        reasons.append(f"빈 노드 {dead:.0%} (> {TH['dead_nodes']:.0%})")
+    good_grid = (som.gh == auto_grid(len(l2)))
+    if dead is not None and dead > TH["dead_nodes"] and not good_grid:
+        reasons.append(f"빈 노드 {dead:.0%} — 격자가 자료 수에 안 맞음 "
+                       f"({som.gh}x{som.gw} → {auto_grid(len(l2))}x{auto_grid(len(l2))} 권장)")
     if worsen > TH["qe_worsen"]:
         reasons.append(f"양자화 오차 {worsen:+.0%} 악화")
     out.update({"trained": True, "vocab": len(emb.word2idx), "dim": emb.dim,
@@ -137,16 +139,35 @@ def check_model(subject, l2, prev=None):
     return out
 
 
+def auto_grid(n_records):
+    """
+    자료 수에 맞는 SOM 격자. 노드가 자료보다 많으면 빈 칸이 남아 지도가 의미를 잃는다.
+    경험칙: 노드 수 ≈ 5√N  (자료 60건 → 6x6, 600건 → 11x11)
+    """
+    import math
+    nodes = max(9, 5 * math.sqrt(max(n_records, 1)))
+    return max(3, min(20, int(round(math.sqrt(nodes)))))
+
+
+def corpus_sig(records):
+    """자료가 바뀌었는지 판단할 지문 (건수 + 내용 해시)."""
+    h = hashlib.sha1()
+    for r in sorted(records, key=lambda x: x.rec_id):
+        h.update(r.rec_id.encode())
+    return f"{len(records)}:{h.hexdigest()[:12]}"
+
+
 def auto_epochs(texts):
     """자료가 크면 에폭을 줄인다 (임베딩 1에폭이 수십 초 걸리므로)."""
     n = sum(len(t) for t in texts)
     return 30 if n < 300_000 else (15 if n < 1_000_000 else 8)
 
 
-def retrain(subject, l2, dim=32, grid=10, iters=4000, epochs=None):
+def retrain(subject, l2, dim=32, grid=None, iters=4000, epochs=None):
     """임베딩 + SOM 재학습 (앱의 '학습 시작'과 같은 절차)."""
     texts = [r.text for r in l2]
     epochs = epochs or auto_epochs(texts)
+    grid = grid or auto_grid(len(l2))
     emb = train_embedding(texts, dim=dim, min_count=1, epochs=epochs)
     emb.save(paths.emb_path(subject))
     X, kept = [], []
@@ -161,7 +182,7 @@ def retrain(subject, l2, dim=32, grid=10, iters=4000, epochs=None):
     som.assign(np.array(X), kept)
     som.save(paths.som_path(subject))
     return {"vocab": len(emb.word2idx), "vectorized": len(kept), "records": len(l2),
-            "epochs": epochs}
+            "epochs": epochs, "grid": grid}
 
 
 # ── 3) 회귀 테스트 (근거 실재성) ──────────────────────────────
@@ -214,7 +235,7 @@ def load_history(subject):
     return []
 
 
-def run(subject, fix=False, dim=32, grid=10):
+def run(subject, fix=False, dim=32, grid=None):
     hist = load_history(subject)
     prev = hist[-1] if hist else None
     l2 = load_records_pkl(paths.l2_path(subject))
@@ -237,12 +258,26 @@ def run(subject, fix=False, dim=32, grid=10):
     rep["model"] = check_model(subject, corpus, prev)
     rep["regression"] = check_regression(subject, l2, common)
     rep["retrained"] = None
-    if fix and rep["model"].get("needs_retrain") and len(corpus) >= 3:
+    sig = corpus_sig(corpus)
+    rep["corpus_sig"] = sig
+    last_sig = (prev or {}).get("retrained_sig")
+    rep["retrained_sig"] = last_sig
+    same_data = (last_sig == sig)
+    if fix and rep["model"].get("needs_retrain") and len(corpus) >= 3 and not same_data:
         try:
             rep["retrained"] = retrain(subject, corpus, dim=dim, grid=grid)
-            rep["model_after"] = check_model(subject, corpus, prev)
+            after = check_model(subject, corpus, prev)
+            # 다음 회차의 비교 기준은 '재학습 후' 상태여야 한다.
+            # (재학습 전 수치를 기준으로 남기면 매번 좋아졌다/나빠졌다가 번갈아 뜨고
+            #  재학습이 격회로 무한 반복된다)
+            rep["model_before"] = rep["model"]
+            rep["model"] = after
+            rep["model_after"] = after
+            rep["retrained_sig"] = sig       # 같은 자료로는 다시 학습하지 않는다
         except Exception as e:
             rep["retrained"] = {"error": str(e)}
+    elif fix and rep["model"].get("needs_retrain") and same_data:
+        rep["retrained"] = "자료가 그대로라 재학습 건너뜀"
 
     h = rep["hygiene"]
     rep["alerts"] = []
@@ -279,9 +314,9 @@ if __name__ == "__main__":
     ap.add_argument("--subject", default="국어")
     ap.add_argument("--fix", action="store_true", help="기준 미달이면 재학습까지")
     ap.add_argument("--dim", type=int, default=32)
-    ap.add_argument("--grid", type=int, default=10)
+    ap.add_argument("--grid", type=int, default=0)
     a = ap.parse_args()
-    r = run(a.subject, a.fix, a.dim, a.grid)
+    r = run(a.subject, a.fix, a.dim, a.grid or None)
     print(json.dumps({k: v for k, v in r.items() if k != "hygiene"},
                      ensure_ascii=False, indent=2, default=str))
     print("경고:", r["alerts"] or "없음")
