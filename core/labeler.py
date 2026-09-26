@@ -73,9 +73,10 @@ def save_labels(subject, d):
 
 # ── 1) LLM 라벨링 ────────────────────────────────────────────
 def label_records(subject, records, api_key, model="gpt-4o-mini", limit=None,
-                  workers=6, progress=None):
+                  workers=None, progress=None):
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from openai import OpenAI
+    workers = workers or int(os.environ.get("SCAN_WORKERS", 3))
     store = load_labels(subject)
     todo = [r for r in records if r.rec_id not in store][:limit or len(records)]
     if not todo:
