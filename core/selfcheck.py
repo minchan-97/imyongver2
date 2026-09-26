@@ -1,328 +1,63 @@
-"""
-selfcheck.py — 자기검증. 앱 버튼으로도, 나중에 워커/크론으로도 같은 코드가 돈다.
-
-    python core/selfcheck.py --subject 국어            # 점검만
-    python core/selfcheck.py --subject 국어 --fix      # 기준 미달이면 재학습까지
-
-세 갈래:
-  1) 데이터 위생  — 출처 부실, 중복 쪽, 손글씨 판독 불안(?·[판독불가]) → 재스캔 후보
-  2) 모델 품질    — SOM 양자화 오차 추이, 노드 붕괴, 임베딩 커버리지 → 나빠지면 재학습
-  3) 회귀 테스트  — 내가 푼 문항의 근거(성취기준 코드·SOM 노드 자료)가 지금도 실재하는지
-
-결과는 data/health_{과목}.pkl에 최근 30회까지 쌓이고 서버에도 백업된다.
-추이(직전 회차 대비)가 있어야 '나빠졌다'를 말할 수 있어서 이력을 남긴다.
-"""
-from __future__ import annotations
-import os, re, sys, time, pickle, hashlib
-from collections import Counter
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import numpy as np
-import paths
-from schema import load_records_pkl
-from embedding import FrozenEmbedding, train_embedding
-from som import SOM
-from korean_tokenizer import tokenize
-from study_state import StudyState
-
-try:
-    from cloud import push as _cloud_push
-except Exception:
-    def _cloud_push(path, **kw): return False
-
-# 기준값 — 넘으면 경고, --fix면 재학습
-TH = {
-    "qe_worsen": 0.15,        # 직전 대비 양자화 오차 15% 악화
-    "dead_nodes": 0.45,       # 빈 노드 비율
-    "coverage": 0.85,         # 새 자료 벡터화 성공률
-    "ungrounded": 0.20,       # 근거 없는 문항 비율
-    "uncertain_page": 3,      # 한 쪽에 (?)/[판독불가] 이 이상이면 재스캔 후보
-}
-UNCERTAIN = re.compile(r"\(\?\)|\[판독불가\]")
-
-
-def health_path(subject):
-    return paths._p(f"health_{subject}.pkl")
-
-
-def _norm(t):
-    return re.sub(r"\s+", " ", re.sub(r"[^\w가-힣]", "", t or "")).strip().lower()
-
-
-# ── 1) 데이터 위생 ────────────────────────────────────────────
-def check_hygiene(l2, l1, common):
-    recs = list(l2) + list(l1) + list(common)
-    weak_source, dup, uncertain, short, no_code, no_year = [], [], [], [], [], []
-    broken = []
-    seen = {}
-    for r in recs:
-        src = (r.source or "").strip()
-        if len(src) < 3 or src.lower() in ("미상", "unknown", "출처", "-"):
-            weak_source.append({"rec_id": r.rec_id, "source": src, "text": r.text[:60]})
-        key = _norm(r.text)[:300]
-        if len(key) >= 15:      # 너무 짧은 문장은 우연히 같을 수 있어 제외
-            if key in seen:
-                dup.append({"rec_id": r.rec_id, "source": src,
-                            "same_as": seen[key], "text": r.text[:60]})
-            else:
-                seen[key] = src
-        try:
-            import maintenance as _mt
-            if _mt.is_garbage(r.text):
-                broken.append({"rec_id": r.rec_id, "source": src, "text": r.text[:60]})
-        except Exception:
-            pass
-        n_unc = len(UNCERTAIN.findall(r.text))
-        if n_unc >= TH["uncertain_page"]:
-            uncertain.append({"rec_id": r.rec_id, "source": src, "marks": n_unc,
-                              "text": r.text[:60]})
-        if len(r.text.strip()) < 25:
-            short.append({"rec_id": r.rec_id, "source": src, "text": r.text[:60]})
-        if r.doc_type == "교육과정_성취기준" and not r.code:
-            no_code.append({"rec_id": r.rec_id, "source": src, "text": r.text[:60]})
-        if r.layer == "L1_pattern" and not r.year:
-            no_year.append({"rec_id": r.rec_id, "source": src, "text": r.text[:60]})
-    return {"total": len(recs), "weak_source": weak_source, "duplicate": dup,
-            "broken_text": broken,
-            "uncertain_scan": uncertain, "too_short": short,
-            "achievement_no_code": no_code, "exam_no_year": no_year,
-            "rescan_candidates": [x["source"] for x in uncertain][:50]}
-
-
-# ── 2) 모델 품질 ─────────────────────────────────────────────
-def train_corpus(subject):
-    """학습에 쓸 자료 = L2 + L1(기출) + 공통. 기출만 있는 과목도 지도가 생긴다."""
-    return (load_records_pkl(paths.l2_path(subject))
-            + load_records_pkl(paths.l1_path(subject))
-            + load_records_pkl(paths.common_chongron_path()))
-
-
-def check_model(subject, l2, prev=None):
-    out = {"trained": False}
-    ep, sp = paths.emb_path(subject), paths.som_path(subject)
-    if not (os.path.exists(ep) and os.path.exists(sp)):
-        out["note"] = "임베딩/SOM이 아직 없어요 — 학습 필요"
-        out["needs_retrain"] = len(l2) >= 3
-        return out
-    emb, som = FrozenEmbedding.load(ep), SOM.load(sp)
-    X, kept = [], []
-    for r in l2:
-        v = emb.embed_tokens(tokenize(r.text))
-        if v is not None:
-            X.append(v); kept.append(r)
-    coverage = len(kept) / max(len(l2), 1)
-    qe = dead = top_share = None
-    if X:
-        Xa = np.array(X)
-        bmus = [som.bmu_of(x) for x in Xa]
-        qe = float(np.mean([1.0 - float(som.W[b] @ x) for b, x in zip(bmus, Xa)]))
-        n_nodes = som.gh * som.gw
-        hits = Counter(bmus)
-        dead = 1.0 - len(hits) / n_nodes
-        top_share = max(hits.values()) / len(bmus)
-    prev_model = (prev or {}).get("model", {}) or {}
-    prev_qe = prev_model.get("qe")
-    prev_grid = prev_model.get("grid")
-    # 격자가 바뀌면(자료 수에 맞춰 재조정) 오차 절대값이 달라지므로 비교하지 않는다.
-    # 오차가 거의 0이거나 자료가 적을 때도 비율 비교는 무의미하다(+51276351% 같은 값이 나옴).
-    same_grid = (prev_grid is None) or (list(prev_grid) == [som.gh, som.gw])
-    comparable = (same_grid and prev_qe and prev_qe > 1e-4 and len(l2) >= 20)
-    worsen = (qe - prev_qe) / prev_qe if (comparable and qe) else 0.0
-    reasons = []
-    if coverage < TH["coverage"]:
-        reasons.append(f"새 자료 벡터화 성공률 {coverage:.0%} (< {TH['coverage']:.0%})")
-    good_grid = (som.gh == auto_grid(len(l2)))
-    if dead is not None and dead > TH["dead_nodes"] and not good_grid:
-        reasons.append(f"빈 노드 {dead:.0%} — 격자가 자료 수에 안 맞음 "
-                       f"({som.gh}x{som.gw} → {auto_grid(len(l2))}x{auto_grid(len(l2))} 권장)")
-    if worsen > TH["qe_worsen"]:
-        reasons.append(f"양자화 오차 {worsen:+.0%} 악화")
-    out.update({"trained": True, "vocab": len(emb.word2idx), "dim": emb.dim,
-                "grid": [som.gh, som.gw], "vectorized": len(kept), "records": len(l2),
-                "coverage": coverage, "qe": qe, "qe_prev": prev_qe, "qe_delta": worsen,
-                "dead_nodes": dead, "top_node_share": top_share,
-                "needs_retrain": bool(reasons), "reasons": reasons})
-    return out
-
-
-def auto_grid(n_records):
-    """
-    자료 수에 맞는 SOM 격자. 노드가 자료보다 많으면 빈 칸이 남아 지도가 의미를 잃는다.
-    경험칙: 노드 수 ≈ 5√N  (자료 60건 → 6x6, 600건 → 11x11)
-    """
-    import math
-    nodes = max(9, 5 * math.sqrt(max(n_records, 1)))
-    return max(3, min(20, int(round(math.sqrt(nodes)))))
-
-
-def corpus_sig(records):
-    """자료가 바뀌었는지 판단할 지문 (건수 + 내용 해시)."""
-    h = hashlib.sha1()
-    for r in sorted(records, key=lambda x: x.rec_id):
-        h.update(r.rec_id.encode())
-    return f"{len(records)}:{h.hexdigest()[:12]}"
-
-
-def auto_epochs(texts):
-    """자료가 크면 에폭을 줄인다 (임베딩 1에폭이 수십 초 걸리므로)."""
-    n = sum(len(t) for t in texts)
-    return 30 if n < 300_000 else (15 if n < 1_000_000 else 8)
-
-
-def retrain(subject, l2, dim=32, grid=None, iters=4000, epochs=None):
-    """임베딩 + SOM 재학습 (앱의 '학습 시작'과 같은 절차)."""
-    texts = [r.text for r in l2]
-    epochs = epochs or auto_epochs(texts)
-    grid = grid or auto_grid(len(l2))
-    emb = train_embedding(texts, dim=dim, min_count=1, epochs=epochs)
-    emb.save(paths.emb_path(subject))
-    X, kept = [], []
-    for r in l2:
-        v = emb.embed_tokens(tokenize(r.text))
-        if v is not None:
-            X.append(v); kept.append(r)
-    if not X:
-        raise RuntimeError("벡터화 실패 — 자료가 너무 적거나 토큰이 없음")
-    som = SOM(grid=(grid, grid), dim=emb.dim)
-    som.train(np.array(X), iters=iters)
-    som.assign(np.array(X), kept)
-    som.save(paths.som_path(subject))
-    return {"vocab": len(emb.word2idx), "vectorized": len(kept), "records": len(l2),
-            "epochs": epochs, "grid": grid}
-
-
-# ── 3) 회귀 테스트 (근거 실재성) ──────────────────────────────
-def check_regression(subject, l2, common):
-    """
-    내가 실제로 푼 문항들이 근거로 삼았던 것:
-      - 성취기준 코드 → 그 코드를 가진 자료가 지금도 있는가
-      - SOM 노드      → 그 노드에 배정된 자료(rec_id)가 지금도 있는가
-    하나도 없으면 '근거 없는 문항'. LLM 없이 결정적으로 돌아간다.
-    """
-    st_ = StudyState.load(paths.study_path(subject), subject)
-    corpus = list(l2) + list(common)
-    have_ids = {r.rec_id for r in corpus}
-    have_codes = {r.code for r in corpus if r.code}
-    som = SOM.load(paths.som_path(subject)) if os.path.exists(paths.som_path(subject)) else None
-
-    codes = getattr(st_, "code_stats", None) or {}
-    nodes = getattr(st_, "node_stats", None) or {}
-    dead_codes = sorted(c for c in codes if c and c not in have_codes)
-    dead_nodes, checked_nodes = [], 0
-    if som is not None:
-        for n in nodes:
-            try:
-                n = int(n)
-            except Exception:
-                continue
-            checked_nodes += 1
-            ids = som.node_rec_ids.get(n, [])
-            if not ids or not (set(ids) & have_ids):
-                dead_nodes.append(n)
-    items = len(codes) + checked_nodes
-    ungrounded = len(dead_codes) + len(dead_nodes)
-    rate = ungrounded / items if items else 0.0
-    return {"checked_codes": len(codes), "checked_nodes": checked_nodes,
-            "ungrounded_codes": dead_codes[:30], "ungrounded_nodes": dead_nodes[:30],
-            "ungrounded_rate": rate,
-            "alert": rate > TH["ungrounded"] and items >= 5,
-            "note": "인용한 근거가 지금 자료에 실재하는지만 봅니다(내용 정확성 평가 아님)."}
-
-
-# ── 실행 ─────────────────────────────────────────────────────
-def load_history(subject):
-    p = health_path(subject)
-    if os.path.exists(p):
-        try:
-            with open(p, "rb") as f:
-                return pickle.load(f)
-        except Exception:
-            pass
-    return []
-
-
-def run(subject, fix=False, dim=32, grid=None):
-    hist = load_history(subject)
-    prev = hist[-1] if hist else None
-    l2 = load_records_pkl(paths.l2_path(subject))
-    l1 = load_records_pkl(paths.l1_path(subject))
-    common = load_records_pkl(paths.common_chongron_path())
-
-    rep = {"subject": subject, "epoch": time.time(),
-           "when": time.strftime("%Y-%m-%d %H:%M", time.localtime())}
-    rep["hygiene"] = check_hygiene(l2, l1, common)
-    try:
-        import resubject
-        rows = resubject.audit([subject], by_source=True)
-        rep["subject_mix"] = {"suspect": sum(r["pages"] for r in rows),
-                              "docs": len(rows), "moves": resubject.summary(rows),
-                              "examples": rows[:10],
-                              "tag_gaps": resubject.tag_gaps(subject)}
-    except Exception as e:
-        rep["subject_mix"] = {"error": str(e)}
-    corpus = train_corpus(subject)
-    rep["model"] = check_model(subject, corpus, prev)
-    rep["regression"] = check_regression(subject, l2, common)
-    rep["retrained"] = None
-    sig = corpus_sig(corpus)
-    rep["corpus_sig"] = sig
-    last_sig = (prev or {}).get("retrained_sig")
-    rep["retrained_sig"] = last_sig
-    same_data = (last_sig == sig)
-    if fix and rep["model"].get("needs_retrain") and len(corpus) >= 3 and not same_data:
-        try:
-            rep["retrained"] = retrain(subject, corpus, dim=dim, grid=grid)
-            after = check_model(subject, corpus, prev)
-            # 다음 회차의 비교 기준은 '재학습 후' 상태여야 한다.
-            # (재학습 전 수치를 기준으로 남기면 매번 좋아졌다/나빠졌다가 번갈아 뜨고
-            #  재학습이 격회로 무한 반복된다)
-            rep["model_before"] = rep["model"]
-            rep["model"] = after
-            rep["model_after"] = after
-            rep["retrained_sig"] = sig       # 같은 자료로는 다시 학습하지 않는다
-        except Exception as e:
-            rep["retrained"] = {"error": str(e)}
-    elif fix and rep["model"].get("needs_retrain") and same_data:
-        rep["retrained"] = "자료가 그대로라 재학습 건너뜀"
-
-    h = rep["hygiene"]
-    rep["alerts"] = []
-    for label, key in [("출처 부실", "weak_source"), ("중복 쪽", "duplicate"),
-                       ("깨진 글자(재스캔 필요)", "broken_text"),
-                       ("판독 불안(재스캔 후보)", "uncertain_scan"),
-                       ("코드 없는 성취기준", "achievement_no_code"),
-                       ("연도 없는 기출", "exam_no_year")]:
-        if h[key]:
-            rep["alerts"].append(f"{label} {len(h[key])}건")
-    _sm = rep.get("subject_mix", {})
-    if _sm.get("suspect"):
-        _mv = ", ".join(f"{m['from']}→{m['to']} {m['pages']}쪽" for m in _sm["moves"][:3])
-        rep["alerts"].append(f"과목이 다르게 판정된 자료 {_sm['suspect']}쪽 ({_mv})")
-    if _sm.get("tag_gaps"):
-        rep["alerts"].append("같은 출처에서 채울 수 있는 태그: "
-                             + ", ".join(f"{k} {v}쪽" for k, v in _sm["tag_gaps"].items()))
-    rep["alerts"] += rep["model"].get("reasons", [])
-    if rep["regression"]["alert"]:
-        rep["alerts"].append(f"근거 없는 문항 {rep['regression']['ungrounded_rate']:.0%}")
-
-    hist.append(rep)
-    hist = hist[-30:]
-    p = health_path(subject)
-    with open(p, "wb") as f:
-        pickle.dump(hist, f)
-    _cloud_push(p)
-    return rep
-
-
-if __name__ == "__main__":
-    import argparse, json
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--subject", default="국어")
-    ap.add_argument("--fix", action="store_true", help="기준 미달이면 재학습까지")
-    ap.add_argument("--dim", type=int, default=32)
-    ap.add_argument("--grid", type=int, default=0)
-    a = ap.parse_args()
-    r = run(a.subject, a.fix, a.dim, a.grid or None)
-    print(json.dumps({k: v for k, v in r.items() if k != "hygiene"},
-                     ensure_ascii=False, indent=2, default=str))
-    print("경고:", r["alerts"] or "없음")
+# 매일 새벽 3시(KST)에 자기검증 + 필요 시 재학습.
+# 쓰려면: GitHub 저장소 Settings → Secrets and variables → Actions 에
+#   SUPABASE_URL, SUPABASE_KEY(service_role) 등록
+name: selfcheck
+# 시간대를 바꾸려면 아래 cron의 UTC 시각을 고치세요 (KST = UTC + 9시간).
+#   KST 03:00 → "0 18 * * *"   |   KST 05:00 → "0 20 * * *"
+#   KST 22:00 → "0 13 * * *"   |   하루 두 번 → 줄을 하나 더 추가
+# GitHub 예약은 러너가 붐비면 10~60분 늦게 시작될 수 있어요.
+# 저장소에 60일간 활동이 없으면 예약이 자동으로 꺼집니다.
+on:
+  schedule:
+    - cron: "0 18 * * *"      # UTC 18:00 = KST 03:00
+  workflow_dispatch:           # 수동 실행 버튼
+    inputs:
+      subject:
+        description: "과목 (비우면 자료가 있는 과목 전부)"
+        default: "all"
+      maintain:
+        description: "자료 정비도 할지 (on / off / 단계 쉼표)"
+        default: "on"
+      rescan_all:
+        description: "보관된 원본 전부 다시 읽기 (off / on / 과목명)"
+        default: "off"
+      wipe_first:
+        description: "다시 읽기 전에 기존 기록 비우기 (off / on)"
+        default: "off"
+      queue_limit:
+        description: "이번 회차에 스캔할 최대 파일 수"
+        default: "20"
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUBJECT: ${{ inputs.subject || 'all' }}
+          # 자료집 요약·확인 질문까지 원하면 저장소 Secrets에 OPENAI_API_KEY 추가(선택)
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # 정비까지 워커가 수행: 깨진 글자 제거·중복·긴 쪽 분할·영역 라벨
+          MAINTAIN: ${{ inputs.maintain || 'on' }}
+          # 스캔까지 워커가 하려면 아래 셋도 Secrets에 (드라이브는 선택)
+          DRIVE_FOLDERS: ${{ secrets.DRIVE_FOLDERS }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+          LABEL_LIMIT: "300"
+          QUEUE_LIMIT: ${{ inputs.queue_limit || '20' }}
+          SCAN_PAGES_PER_JOB: "120"
+          SCAN_WORKERS: "3"           # 동시 호출 수 (429가 잦으면 2로)   # 큰 파일은 이만큼씩 끊어서 (남으면 다음 회차)
+          RESCAN_ALL: ${{ inputs.rescan_all || 'off' }}
+          WIPE_FIRST: ${{ inputs.wipe_first || 'off' }}
+          # 자가 시험 + 결핍 검색 (BRAVE_API_KEY가 있어야 웹 수집이 돕니다)
+          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+          EXAM_RETRIEVAL: "30"
+          EXAM_CLOZE: "8"
+          GAP_QUERIES: "5"
+        run: python scripts/worker.py --fix
