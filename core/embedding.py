@@ -16,7 +16,6 @@ embedding.py — 단어 임베딩을 '한 번만' 학습해서 고정(freeze)한
   CPU only, 외부 패키지 없음(numpy만). 결정론적(seed 고정).
 """
 from __future__ import annotations
-CORE_VERSION = "13.3"
 import numpy as np
 import pickle
 from collections import Counter
@@ -34,11 +33,14 @@ except Exception:  # cloud 계층이 없어도 로컬 동작은 유지
 
 class FrozenEmbedding:
     """학습이 끝나면 vectors 를 읽기 전용으로만 쓴다."""
-    def __init__(self, word2idx, vectors):
+    def __init__(self, word2idx, vectors, freq=None):
         self.word2idx = word2idx
         self.idx2word = {i: w for w, i in word2idx.items()}
         self.vectors = vectors            # (V, dim), L2-normalized
         self.dim = vectors.shape[1]
+        # 낱말 빈도. 문장 벡터를 만들 때 흔한 낱말의 비중을 낮추는 데 쓴다.
+        self.freq = freq or {}
+        self.total = max(sum(self.freq.values()), 1)
 
     def vec(self, word: str):
         i = self.word2idx.get(word)
@@ -46,12 +48,32 @@ class FrozenEmbedding:
             return None
         return self.vectors[i]
 
-    def embed_tokens(self, tokens: list[str]):
-        """토큰 리스트 → 각 토큰 벡터들의 평균(문장/문단 벡터). OOV는 건너뜀."""
-        vs = [self.vectors[self.word2idx[t]] for t in tokens if t in self.word2idx]
-        if not vs:
+    SIF_A = 1e-3      # 작을수록 흔한 낱말을 더 세게 누른다
+
+    def embed_tokens(self, tokens: list[str], weighted: bool = True):
+        """
+        토큰 리스트 → 문장/문단 벡터. OOV는 건너뜀.
+
+        단순 평균이면 '지도·학습·내용' 같은 흔한 낱말이 벡터를 지배해서
+        긴 글일수록 개념이 뭉개진다. 그래서 빈도가 높은 낱말일수록 가중치를
+        낮춘다 (w = a / (a + p)). 빈도 정보가 없는 옛 모델은 평균으로 되돌아간다.
+        """
+        idxs = [self.word2idx[t] for t in tokens if t in self.word2idx]
+        if not idxs:
             return None
-        v = np.mean(vs, axis=0)
+        if weighted and getattr(self, "freq", None):
+            words = [self.idx2word[i] for i in idxs]
+            # 한 번만 나온 낱말은 대개 깨진 토큰('10시', '11학습')이라 절반으로 누른다.
+            # 안 그러면 가장 희귀한 잡음이 문장 벡터를 지배한다.
+            w = np.array([
+                self.SIF_A / (self.SIF_A + self.freq.get(x, 1) / self.total)
+                * (0.5 if self.freq.get(x, 1) <= 1 else 1.0)
+                for x in words])
+            if w.sum() <= 1e-9:
+                w = np.ones(len(idxs))
+            v = (self.vectors[idxs] * w[:, None]).sum(0) / w.sum()
+        else:
+            v = self.vectors[idxs].mean(0)
         n = np.linalg.norm(v)
         return v / n if n > 1e-9 else v
 
@@ -72,14 +94,15 @@ class FrozenEmbedding:
 
     def save(self, path):
         with open(path, "wb") as f:
-            pickle.dump({"word2idx": self.word2idx, "vectors": self.vectors}, f)
+            pickle.dump({"word2idx": self.word2idx, "vectors": self.vectors,
+                         "freq": self.freq}, f)
         _cloud_push(path)
 
     @staticmethod
     def load(path) -> "FrozenEmbedding":
         with open(path, "rb") as f:
             d = pickle.load(f)
-        return FrozenEmbedding(d["word2idx"], d["vectors"])
+        return FrozenEmbedding(d["word2idx"], d["vectors"], d.get("freq"))
 
 
 def train_embedding(
@@ -156,4 +179,5 @@ def train_embedding(
     norms = np.linalg.norm(W_in, axis=1, keepdims=True)
     vectors = W_in / np.maximum(norms, 1e-9)
     print(f"  [embed] done. V={V}, dim={dim}")
-    return FrozenEmbedding(word2idx, vectors)
+    kept_freq = {w: int(freq[w]) for w in word2idx}
+    return FrozenEmbedding(word2idx, vectors, kept_freq)
