@@ -14,7 +14,6 @@ page_scan.py — 파일을 '페이지 통째로' 스캔해서 읽는다.
   - docx/txt는 페이지가 없으니 일정 길이로 묶어 '페이지'로 취급(LLM 불필요).
 """
 from __future__ import annotations
-CORE_VERSION = "13.3"
 import io, os, re, json, time, base64, pickle, hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -296,7 +295,10 @@ def _scan_vision(jpeg: bytes, api_key: str, model: str, concept_names,
             }
         except Exception as e:
             last = e
-            time.sleep(1.5 * (attempt + 1))
+            wait = 5 * (2 ** attempt)          # 5초 → 10초 → 20초
+            if "rate_limit" in str(e) or "429" in str(e):
+                wait = max(wait, 20 * (attempt + 1))
+            time.sleep(wait)
     raise RuntimeError(f"스캔 실패: {last}")
 
 
@@ -324,13 +326,14 @@ def _plain(text, method):
 
 # ── 전체 스캔 ─────────────────────────────────────────────────
 def scan_pages(pages, api_key=None, concept_names=None, cache: ScanCache = None,
-               workers=6, model=None, handwriting=False, progress=None) -> list[dict]:
+               workers=None, model=None, handwriting=False, progress=None) -> list[dict]:
     """
     pages: build_pages() 결과
     반환: 쪽별 dict {page(0부터 전체 순번), name, index, text, codes, area,
                      concepts, skip, method, cached, error?, note?}
     handwriting=True → 손글씨 지침 추가 + 고해상도 + 손글씨용 모델(기본 gpt-4o)
     """
+    workers = workers or int(os.environ.get("SCAN_WORKERS", 3))
     if handwriting:
         model = model or HANDWRITING_MODEL
     model = model or DEFAULT_MODEL
@@ -398,4 +401,3 @@ def scan_file(filename, raw, api_key=None, concept_names=None, cache=None,
     """파일 1개용 (호환)."""
     return scan_pages(build_pages([(filename, raw)]), api_key, concept_names, cache,
                       workers, model, handwriting, progress)
-
