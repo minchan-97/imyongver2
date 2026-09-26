@@ -1127,8 +1127,8 @@ with tabgrow:
         cols = [c for c in ("근거검색", "빈칸복원") if _rdf[c].notna().any()]
         if cols:
             st.line_chart(_rdf[cols])
-        st.caption("구멍이 생기고 메워진 추이")
-        st.line_chart(_rdf[["구멍", "메움"]])
+        st.caption("구멍이 생기고 메워진 추이 (열린 것 / 메운 것)")
+        st.line_chart(_rdf[["열린구멍", "메운구멍"]])
     if _arms:
         st.write("**전략 성적** (자료가 바뀌면 순위도 바뀝니다)")
         st.dataframe([{"전략": a["전략"], "시행": a["시행"],
