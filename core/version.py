@@ -7,7 +7,7 @@ version.py — 버전과 '이 버전이 필요로 하는 함수' 목록.
 
 새 기능을 만들면 그 함수 이름을 여기에 추가할 것.
 """
-VERSION = "15.8"
+VERSION = "16.0"
 
 REQUIRES = {
     "cloud": ["sync", "push", "list_uploads", "download_upload", "list_local_names",
@@ -22,7 +22,9 @@ REQUIRES = {
                   "exam_pages", "judge_exam_pages", "apply_exam_moves"],
     "maintenance": ["run", "STEPS", "APP_STEPS", "is_garbage", "subject_list",
                     "clean_areas", "drop_garbage"],
-    "selfcheck": ["run", "retrain", "auto_epochs", "load_history", "train_corpus"],
+    "selfcheck": ["run", "retrain", "auto_epochs", "load_history", "train_corpus",
+                  "auto_grid", "corpus_sig"],
+    "progress": ["health", "exam", "answers", "trend", "headline", "overview"],
     "daily_digest": ["build", "mark_read", "recent", "today_str", "load_store"],
     "trend_lab": ["stats", "predict", "backtest", "summary", "load_lab", "top_rules"],
     "labeler": ["label_records", "train_tagger", "tag", "clean_area"],
